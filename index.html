@@ -1,3 +1,6 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>鉄骨ビューア</title>
 <style>
 /* 画面：上にバー、真ん中に 3D、下に道具。左は製品一覧（引き出し）、図面は全画面で重ねる */
@@ -891,11 +894,19 @@ async function boxBoot(){
     $('#bxIn').onclick=boxLogin; return;
   }
   $('#ldT').textContent='データの一覧を見ています'; progress(0.1,'Box を見ています');
-  let root;
-  try{ root=(await boxItems('0')).find(x=>x.type==='folder' && x.name===BOX.root); }
-  catch(e){ if (e.message==='login'){ lss('bx_rt',null); return boxBoot(); } kSel('<p>'+esc(e.message)+'</p><button class="btn pri" onclick="location.reload()">やり直す</button>'); return; }
-  if (!root){ kSel('<p>Box に「'+BOX.root+'」のフォルダが見つかりません。ログインしたアカウントが違うかもしれません。</p><button class="btn" id="bxOut">別のアカウントでログイン</button>'); $('#bxOut').onclick=()=>{ lss('bx_rt',null); lss('bx_at',null); boxLogin(); }; return; }
-  const ks=(await boxItems(root.id)).filter(x=>x.type==='folder').sort((a,b)=>natNum(a.name)-natNum(b.name)||a.name.localeCompare(b.name,'ja'));
+  // 「鉄骨ビューア」のフォルダ：一番上（共有用アカウント）と検索（香月さん本人は「香月」の中）。同じ名前が複数あれば、中に工区のフォルダが一番多い物
+  let cands=[];
+  try{
+    cands=(await boxItems('0')).filter(x=>x.type==='folder' && x.name===BOX.root);
+    try{ const s=await (await boxFetch('/search?query='+encodeURIComponent('"'+BOX.root+'"')+'&type=folder&content_types=name&fields=id,name&limit=50')).json(); for (const x of s.entries||[]) if (x.name===BOX.root && !cands.some(c=>c.id===x.id)) cands.push(x); }catch(e){ if (e.message==='login') throw e; }
+  }
+  catch(e){ if (e.message==='login'){ lss('bx_rt',null); return boxBoot(); } $('#ldT').textContent='Box が読めませんでした'; kSel('<p>'+esc(e.message)+'</p><button class="btn pri" onclick="location.reload()">やり直す</button>'); return; }
+  let ks=null;
+  for (const c of cands){ const sub=(await boxItems(c.id)).filter(x=>x.type==='folder'); if (!ks || sub.length>ks.length) ks=sub; }
+  if (!ks || !ks.length){ $('#ldT').textContent='データが見つかりません';
+    kSel('<p>'+(cands.length?'Box の「'+BOX.root+'」の中に工区のフォルダがありません。':'Box に「'+BOX.root+'」のフォルダが見つかりません。ログインしたアカウントが違うかもしれません。')+'</p><button class="btn" id="bxOut">別のアカウントでログイン</button>');
+    $('#bxOut').onclick=()=>{ lss('bx_rt',null); lss('bx_at',null); boxLogin(); }; return; }
+  ks.sort((a,b)=>natNum(a.name)-natNum(b.name)||a.name.localeCompare(b.name,'ja'));
   progress(0.5,'工区を見ています');
   await Promise.all(ks.map(async f=>{ f.files=(await boxItems(f.id)).filter(x=>x.type==='file' && /\.bin$/i.test(x.name)); }));
   const last=lsg('sv_kouku');
