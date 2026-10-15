@@ -1060,9 +1060,15 @@ function nearEdge(x,y,touch){
   for (const [dx,dy] of [[0,0],[R*.5,0],[-R*.5,0],[0,R*.5],[0,-R*.5]]){ const j=pickId(x+dx,y+dy); if (j>=0 && j<S.els.length) ids.add(j); }
   if (!ids.size) return null;
   const r=cv.getBoundingClientRect(), mx=x-r.left, my=y-r.top, all=[];
-  for (const id of ids) for (const [A,B] of edgesOf(id).segs){ const a=toScreen(A), b=toScreen(B); if (a.z>1||b.z>1) continue;
-    const dx=b.x-a.x, dy=b.y-a.y, L=dx*dx+dy*dy||1; const t=Math.max(0,Math.min(1,((mx-a.x)*dx+(my-a.y)*dy)/L));
-    const d=Math.hypot(a.x+dx*t-mx, a.y+dy*t-my); if (d<R) all.push({A,B,el:id,d,t}); }
+  // 長い辺（BH のフランジなど）は近づくと片方の端がカメラの後ろに回る → カメラの手前で切った所までを画面に写して測る（香月さん 2026/10/16）
+  camera.updateMatrixWorld(); const Vm=camera.matrixWorldInverse, zN=-camera.near*1.05, va=new THREE.Vector3(), vb=new THREE.Vector3();
+  for (const id of ids) for (const [A,B] of edgesOf(id).segs){
+    va.copy(A).applyMatrix4(Vm); vb.copy(B).applyMatrix4(Vm); let s0=0, s1=1;
+    if (va.z>zN && vb.z>zN) continue;   // 両端とも後ろ
+    if (va.z>zN) s0=(zN-va.z)/(vb.z-va.z); else if (vb.z>zN) s1=(zN-va.z)/(vb.z-va.z);
+    const a=toScreen(A.clone().lerp(B,s0)), b=toScreen(A.clone().lerp(B,s1));
+    const dx=b.x-a.x, dy=b.y-a.y, L=dx*dx+dy*dy||1; const u=Math.max(0,Math.min(1,((mx-a.x)*dx+(my-a.y)*dy)/L));
+    const d=Math.hypot(a.x+dx*u-mx, a.y+dy*u-my); if (d<R) all.push({A,B,el:id,d,t:s0+(s1-s0)*u}); }
   all.sort((p,q)=>p.d-q.d);
   for (let i=0;i<all.length && i<8;i++){ const c=all[i]; if (visibleAt(c.A.clone().lerp(c.B,c.t),0)) return c; }
   return null;
