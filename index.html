@@ -1366,7 +1366,7 @@ const HINT = {sel:'部材をタップすると製品が選ばれます。図面�
 // ヒントは数秒で消える（画面を広く使う）
 let hintTimer=0;
 function hint(t){ const el=$('#hint'); el.textContent = t || HINT[S.mode]; el.hidden=false; clearTimeout(hintTimer); hintTimer=setTimeout(()=>{ el.hidden=true; }, 4000); }
-function setMode(m){ S.mode=m; clearPend(); S.cand=null; if (typeof showEdgeHover==='function') showEdgeHover(null); if ($('#cbar')) $('#cbar').hidden=true; showHover(null); document.querySelectorAll('.tool[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===m))); hint(); }
+function setMode(m){ S.mode=m; clearPend(); S.cand=null; if (S.candObj){ measGroup.remove(S.candObj); S.candObj=null; } if (typeof showEdgeHover==='function') showEdgeHover(null); if ($('#cbar')) $('#cbar').hidden=true; showHover(null); document.querySelectorAll('.tool[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===m))); hint(); }
 document.querySelectorAll('.tool[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
 // 選ぶ物：製品 ⇄ 部材（押すたびに切り替え。選択の道具になる）
 S.selKind='asm';
@@ -1459,16 +1459,31 @@ function addLine3(p, q, save){
 function saveLines3(){ try{ localStorage.setItem('sv_lines3d'+(S.kouku||''), JSON.stringify(S.lines3d.map(L=>[L.a.toArray(), L.b.toArray()]))); }catch(e){} }
 function loadLines3(){ try{ const a=JSON.parse(localStorage.getItem('sv_lines3d'+(S.kouku||''))||'[]'); for (const [p,q] of a) addLine3(new THREE.Vector3(...p), new THREE.Vector3(...q), false); }catch(e){} }
 // 指で選んだ候補の確認（決定・次の候補・取消）
+// 辺の角度・辺の間・面の角度も、指では「この辺／この面を選びますか？」を挟む（動かしている時の押し間違い：香月さん 2026/10/16）
 function showCand(){
-  const c=S.cand; if (!c){ $('#cbar').hidden=true; showHover(null); return; }
+  const c=S.cand; if (S.candObj){ measGroup.remove(S.candObj); S.candObj=null; req(); }
+  if (!c){ $('#cbar').hidden=true; showHover(null); return; }
+  if (c.kind){
+    if (c.kind==='edge'){ showHover(null); S.candObj=lineObj([c.v.A,c.v.B],0xff8a1f); }
+    else { showHover({p:c.v.p, k:2}); hoverMk.div.innerHTML='<span>この面</span>'; }
+    $('#cbarT').innerHTML='<b>'+(c.kind==='edge'?'この辺':'この面')+'</b> を選びますか？'; $('#cNext').hidden=true; $('#cbar').hidden=false; req(); return;
+  }
   const sn=c.list[c.i]; showHover(sn);
   $('#cbarT').innerHTML='<b>'+KIND[sn.k]+'</b> を選びますか？'+(c.list.length>1?'<span class="k">（候補 '+(c.i+1)+'/'+c.list.length+'）</span>':'');
   $('#cNext').hidden = c.list.length<2; $('#cbar').hidden=false;
 }
 function endCand(){ S.cand=null; showCand(); }
-$('#cOk').onclick=()=>{ const c=S.cand; if (!c) return; const sn=c.list[c.i]; endCand(); pickPoint(sn); };
-$('#cNext').onclick=()=>{ const c=S.cand; if (!c) return; c.i=(c.i+1)%c.list.length; showCand(); };
-$('#cNo').onclick=()=>{ endCand(); hint(S.pend?'2 点目をタップ':undefined); };
+$('#cOk').onclick=()=>{ const c=S.cand; if (!c) return; endCand(); if (c.kind==='edge') takeEdge(c.v); else if (c.kind==='face') takeFace(c.v); else pickPoint(c.list[c.i]); };
+$('#cNext').onclick=()=>{ const c=S.cand; if (!c || c.kind) return; c.i=(c.i+1)%c.list.length; showCand(); };
+$('#cNo').onclick=()=>{ endCand(); hint(!S.pend?undefined: S.mode==='fang'?'2 つ目の面をタップ': (S.mode==='eang'||S.mode==='edist')?'2 本目の辺をタップ':'2 点目をタップ'); };
+function takeEdge(ed){
+  if (!S.pend){ S.pend={e:ed, items:[], objs:[lineObj([ed.A,ed.B],0x9b1fd1)]}; hint('2 本目の辺をタップ'); req(); return; }
+  const e1=S.pend.e; clearPend(); if (S.mode==='eang') addMeasureEdges(e1,ed); else addMeasureEdgeDist(e1,ed); hint();
+}
+function takeFace(h){
+  if (!S.pend){ S.pend={f:h, items:[{div:mkDiv('mk c0'),p:h.p}], objs:[]}; hint('2 つ目の面をタップ'); req(); return; }
+  const f=S.pend.f; clearPend(); addMeasureFaces(f,h); hint();
+}
 function onTap(x,y,touch,add){
   if (S.mode==='sel'){
     const id=pickId(x,y); if (id<0||id>=S.els.length){ if (add) return; $('#card').hidden=true; selectAsm(-1); return; }
@@ -1492,14 +1507,14 @@ function onTap(x,y,touch,add){
     const sn=snap(x,y,false); if (!sn) return; pickPoint(sn); return;
   }
   if (S.mode==='eang' || S.mode==='edist'){
-    const ed=nearEdge(x,y,touch); if (!ed) return;
-    if (!S.pend){ S.pend={e:ed, items:[], objs:[lineObj([ed.A,ed.B],0x9b1fd1)]}; hint('2 本目の辺をタップ'); req(); return; }
-    const e1=S.pend.e; clearPend(); if (S.mode==='eang') addMeasureEdges(e1,ed); else addMeasureEdgeDist(e1,ed); hint(); return;
+    const ed=nearEdge(x,y,touch); if (!ed){ if (touch) hint('ここには辺がありません'); return; }
+    if (touch){ S.cand={kind:'edge', v:ed}; showCand(); return; }
+    takeEdge(ed); return;
   }
   if (S.mode==='fang'){
     const id=pickId(x,y); if (id<0||id>=S.els.length) return; const h=hitEl(id,x,y); if (!h) return;
-    if (!S.pend){ S.pend={f:h, items:[{div:mkDiv('mk c0'),p:h.p}], objs:[]}; hint('2 つ目の面をタップ'); req(); return; }
-    const f=S.pend.f; clearPend(); addMeasureFaces(f,h); hint(); return;
+    if (touch){ S.cand={kind:'face', v:h}; showCand(); return; }
+    takeFace(h); return;
   }
 }
 let down=null, raf=0;
