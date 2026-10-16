@@ -342,8 +342,12 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
   }
 
   // ---- 表示 ----
-  function w2s(x, y) { return [(x - st.ox) * st.s, st.H - (y - st.oy) * st.s]; }
-  function s2w(X, Y) { return [X / st.s + st.ox, (st.H - Y) / st.s + st.oy]; }
+  // 図面を回す（st.rot＝ラジアン）。工場で水平に置く勾配材を、選んだ辺が水平になるように回して測る（香月さん 2026/10/16）
+  function r2v(x, y) { var c = Math.cos(st.rot || 0), n = Math.sin(st.rot || 0); return [c * x - n * y, n * x + c * y]; }
+  function v2r(x, y) { var c = Math.cos(st.rot || 0), n = Math.sin(st.rot || 0); return [c * x + n * y, -n * x + c * y]; }
+  function s2v(X, Y) { return [X / st.s + st.ox, (st.H - Y) / st.s + st.oy]; }
+  function w2s(x, y) { var v = r2v(x, y); return [(v[0] - st.ox) * st.s, st.H - (v[1] - st.oy) * st.s]; }
+  function s2w(X, Y) { var v = s2v(X, Y); return v2r(v[0], v[1]); }
   function buildPaths() {
     var by = {};
     function P(c) { return by[c] || (by[c] = new Path2D()); }
@@ -362,7 +366,8 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     var c = st.cv, ctx = st.ctx, dpr = st.dpr;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
-    ctx.setTransform(st.s * dpr, 0, 0, -st.s * dpr, -st.ox * st.s * dpr, (st.H + st.oy * st.s) * dpr);
+    var rc = Math.cos(st.rot || 0), rn = Math.sin(st.rot || 0);
+    ctx.setTransform(st.s * rc * dpr, -st.s * rn * dpr, -st.s * rn * dpr, -st.s * rc * dpr, -st.ox * st.s * dpr, (st.H + st.oy * st.s) * dpr);
     ctx.lineWidth = 1 / st.s;
     for (var k in st.paths) { ctx.strokeStyle = col(+k); ctx.stroke(st.paths[k]); }
     // 文字（画面で小さすぎる物は省く）
@@ -371,7 +376,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     for (var i = 0; i < T.length; i++) {
       var t = T[i], px = t[2] * st.s; if (px < 3) continue;
       var p = w2s(t[0], t[1]); if (p[0] < -2000 || p[0] > W + 2000 || p[1] < -2000 || p[1] > H + 2000) continue;
-      ctx.save(); ctx.translate(p[0], p[1]); if (t[3]) ctx.rotate(-t[3] * Math.PI / 180); if (t[8] && t[8] !== 1) ctx.scale(t[8], 1);
+      ctx.save(); ctx.translate(p[0], p[1]); if (t[3] || st.rot) ctx.rotate(-t[3] * Math.PI / 180 - (st.rot || 0)); if (t[8] && t[8] !== 1) ctx.scale(t[8], 1);
       ctx.fillStyle = col(t[5]); ctx.font = px.toFixed(1) + 'px "MS Gothic","Osaka-Mono",monospace';
       ctx.textAlign = HA[t[6]] || 'left'; ctx.textBaseline = VA[t[7]] || 'alphabetic';
       ctx.fillText(t[4], 0, 0); ctx.restore();
@@ -402,6 +407,10 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
   // 引いた線（図面ごとにこの端末に保存）
   function saveLines() { try { localStorage.setItem('sv_lines2d_' + (st.d.name || ''), JSON.stringify(st.lines)); } catch (e) {} }
   function loadLines(name) { try { return JSON.parse(localStorage.getItem('sv_lines2d_' + (name || '')) || '[]'); } catch (e) { return []; } }
+  function distText(m) {   // 水平・垂直は今の向き（回した後）で
+    var va = r2v(m.a.x, m.a.y), vb = r2v(m.b.x, m.b.y), g = m.g;
+    m.text = ['L = ' + fmt(Math.hypot(vb[0] - va[0], vb[1] - va[1]) * g), '水平 ' + fmt(Math.abs(vb[0] - va[0]) * g) + ' ／ 垂直 ' + fmt(Math.abs(vb[1] - va[1]) * g), m.sc ? '縮尺 1/' + m.sc.n : '縮尺不明（図面の長さ）'];
+  }
   function drawMeasures(ctx) {
     var ac = accent();
     ctx.strokeStyle = '#00e676'; ctx.lineWidth = 2.5;
@@ -413,6 +422,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
         ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.setLineDash([]);
         ctx.strokeStyle = ac; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
         marker(ctx, a, m.a.kind, ac); marker(ctx, b, m.b.kind, ac);
+        if (m.g) distText(m);
         var mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
         ctx.strokeStyle = ac; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx + 24, my - 24); ctx.stroke();
         label(ctx, mx + 24, my - 24, m.text, ac);
@@ -444,12 +454,16 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     else if (st.mode === 'erase') info('線消し：消したい線の近くをタップ');
     else if (st.mode === 'dist') info(st.pend ? '2 点目をタップ（1 点目：' + (KN[st.pend.kind] || st.pend.kind) + '）' : '寸法：1 点目をタップ（孔の中心・線の端点・中点・交点に吸い付きます）');
     else if (st.mode === 'angle') info(st.pendLine ? '2 本目の線をタップ' : '角度：1 本目の線をタップ');
+    else if (st.mode === 'rot') info('水平：水平にしたい線（勾配の辺など）をタップすると、図面全体を回します');
     else info('ドラッグで移動（マウスは中ボタンでも）、ホイール／2 本指で拡大');
   }
 
   function fit() {
     if (!st || !st.d) return;
-    var bb = st.d.bbox, bw = bb[2] - bb[0] || 1, bh = bb[3] - bb[1] || 1;
+    var b0 = st.d.bbox, cs = [r2v(b0[0], b0[1]), r2v(b0[2], b0[1]), r2v(b0[0], b0[3]), r2v(b0[2], b0[3])];
+    var bb = [Math.min.apply(null, cs.map(function (p) { return p[0]; })), Math.min.apply(null, cs.map(function (p) { return p[1]; })),
+              Math.max.apply(null, cs.map(function (p) { return p[0]; })), Math.max.apply(null, cs.map(function (p) { return p[1]; }))];
+    var bw = bb[2] - bb[0] || 1, bh = bb[3] - bb[1] || 1;
     st.s = Math.min(st.W / bw, st.H / bh) * 0.94;
     st.ox = bb[0] - (st.W / st.s - bw) / 2; st.oy = bb[1] - (st.H / st.s - bh) / 2;
     req();
@@ -463,8 +477,13 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     if (first || !st.s) fit();
     else req();
   }
+  function setRot(a) {
+    var cx = st.W / 2, cy = st.H / 2, w = s2w(cx, cy);
+    st.rot = a; var v = r2v(w[0], w[1]); st.meas.forEach(function (m) { if (m.g) distText(m); });
+    st.ox = v[0] - cx / st.s; st.oy = v[1] - (st.H - cy) / st.s; req();
+  }
   function zoomAt(X, Y, f) {
-    var w = s2w(X, Y); st.s *= f;
+    var w = s2v(X, Y); st.s *= f;
     st.ox = w[0] - X / st.s; st.oy = w[1] - (st.H - Y) / st.s; req();
   }
 
@@ -489,12 +508,19 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
         var a = st.pend, b = p; st.pend = null;
         if (st.mode === 'line') { st.lines.push([a.x, a.y, b.x, b.y]); saveLines(); info('線を引きました'); req(); return; }
         var sc = scaleAt((a.x + b.x) / 2, (a.y + b.y) / 2), g = sc ? sc.g : 1;
-        var L = Math.hypot(b.x - a.x, b.y - a.y) * g, dx = Math.abs(b.x - a.x) * g, dy = Math.abs(b.y - a.y) * g;
-        var text = ['L = ' + fmt(L), '水平 ' + fmt(dx) + ' ／ 垂直 ' + fmt(dy), sc ? '縮尺 1/' + sc.n : '縮尺不明（図面の長さ）'];
-        st.meas.push({ type: 'dist', a: a, b: b, text: text });
+        var va = r2v(a.x, a.y), vb = r2v(b.x, b.y);
+        var L = Math.hypot(b.x - a.x, b.y - a.y) * g, dx = Math.abs(vb[0] - va[0]) * g, dy = Math.abs(vb[1] - va[1]) * g;
+        var mm = { type: 'dist', a: a, b: b, g: g, sc: sc }; distText(mm); st.meas.push(mm);
         info('<b>' + fmt(L) + '</b>　水平 ' + fmt(dx) + '　垂直 ' + fmt(dy) + '　' + (sc ? '（縮尺 1/' + sc.n + '）' : '（縮尺不明）'));
         req(); return;
       }
+    } else if (st.mode === 'rot') {
+      var lr = pickLine(w[0], w[1], r);
+      if (!lr) { info('線が見つかりません。水平にしたい線の上をタップしてください'); return; }
+      var ang = Math.atan2(lr[3] - lr[1], lr[2] - lr[0]);
+      ang = ((ang % Math.PI) + Math.PI) % Math.PI; if (ang > Math.PI / 2) ang -= Math.PI;   // 回す量は 90° まで（上下が逆さにならない）
+      setRot(-ang); st.hoverLine = null;
+      info('回しました（' + fmt(-ang * 180 / Math.PI) + '°）。このまま「寸法」で測れます。「元の向き」で戻ります'); return;
     } else if (st.mode === 'angle') {
       var l = pickLine(w[0], w[1], r);
       if (!l) { info('線が見つかりません。線の上をタップしてください'); return; }
@@ -528,7 +554,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
         if (ptrs.size === 2) {
           var a = Array.from(ptrs.values()), c0 = [(a[0][0] + a[1][0]) / 2, (a[0][1] + a[1][1]) / 2];
           // つまみ始めの指の真ん中にある図面上の点を覚えておく（毎回計算し直すと位置が暴れる）
-          pinch = { d: Math.max(Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]), 40), s: st.s, w: s2w(c0[0], c0[1]) }; moved = true;
+          pinch = { d: Math.max(Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]), 40), s: st.s, w: s2v(c0[0], c0[1]) }; moved = true;
         }
       },
       move: function (e) {
@@ -603,7 +629,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     cOk.onclick = function () { var c = st.cand; if (!c) return; var p = c.list[c.i]; st.cand = null; showCand(); tapAt(0, 0, false, p); };
     cNext.onclick = function () { var c = st.cand; if (!c) return; c.i = (c.i + 1) % c.list.length; showCand(); };
     cNo.onclick = function () { st.cand = null; showCand(); hint(); };
-    [['移動', 'pan'], ['寸法', 'dist'], ['角度', 'angle'], ['線', 'line'], ['線消し', 'erase'], ['全体', null, fit], ['消す', null, clear]].forEach(function (b) {
+    [['移動', 'pan'], ['寸法', 'dist'], ['角度', 'angle'], ['水平', 'rot'], ['元の向き', null, function () { setRot(0); hint(); }], ['線', 'line'], ['線消し', 'erase'], ['全体', null, fit], ['消す', null, clear]].forEach(function (b) {
       var el = document.createElement('button'); el.type = 'button'; el.className = 'dv-btn'; el.textContent = b[0];
       if (b[1]) { el.dataset.mode = b[1]; el.setAttribute('aria-pressed', 'false'); el.onclick = function () { setMode(b[1]); }; }
       else el.onclick = b[2];
@@ -1338,7 +1364,8 @@ function showOthers(on){
 
 // ---------- 製品一覧 ----------
 function buildList(){
-  const q=$('#q').value.trim().toUpperCase(), only=$('#onlyDwg').checked; const L=$('#list'); L.innerHTML='';
+  const anyDwg=S.asms.some(a=>a.dwg.length); $('#onlyDwg').parentNode.style.display=anyDwg?'flex':'none';   // 図面の無い工区（4・5工区）は全部の製品を出す
+  const q=$('#q').value.trim().toUpperCase(), only=anyDwg&&$('#onlyDwg').checked; const L=$('#list'); L.innerHTML='';
   const arr=S.asms.filter(a=>a.mark && !/^dummy/i.test(a.mark) && (!only||a.dwg.length) && (!q||a.mark.toUpperCase().includes(q))).sort((a,b)=>a.mark.localeCompare(b.mark,'ja',{numeric:true}));
   const frag=document.createDocumentFragment();
   for (const a of arr){ const b=document.createElement('button'); b.dataset.i=a.i; b.setAttribute('aria-current',String(a.i===S.selAsm)); b.innerHTML=esc(a.mark)+(a.dwg.length?'<span class="d">図面</span>':''); b.onclick=ev=>{ const add=ev.ctrlKey||ev.metaKey; selectAsm(a.i,true,add); showCard(-1); if (add) return; if (matchMedia('(max-width:600px)').matches) toggleList(false); }; frag.appendChild(b); }
