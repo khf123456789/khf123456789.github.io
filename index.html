@@ -436,6 +436,12 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
         label(ctx, c[0] + 24, c[1] - 24, m.text, ac);
       }
     });
+    (st.marks || []).forEach(function (mk) {   // 重心などの印（ピンク）
+      var p = w2s(mk.x, mk.y), r = 11; ctx.strokeStyle = '#ff2bd6'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, Math.PI * 2); ctx.moveTo(p[0] - r * 1.6, p[1]); ctx.lineTo(p[0] + r * 1.6, p[1]); ctx.moveTo(p[0], p[1] - r * 1.6); ctx.lineTo(p[0], p[1] + r * 1.6); ctx.stroke();
+      ctx.fillStyle = '#ff2bd6'; ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.arc(p[0], p[1], r, 0, Math.PI / 2); ctx.lineTo(p[0], p[1]); ctx.arc(p[0], p[1], r, Math.PI, Math.PI * 1.5); ctx.fill();
+      ctx.font = '600 13px system-ui,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillText(mk.label || '', p[0] + r + 4, p[1] - r - 2);
+    });
     if (st.pend) { var p = w2s(st.pend.x, st.pend.y); marker(ctx, p, st.pend.kind, ac); }
     if (st.pendLine) {
       var l = st.pendLine, p1 = w2s(l[0], l[1]), q1 = w2s(l[2], l[3]);
@@ -611,7 +617,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
   }
   function clear() { if (!st) return; st.meas = []; st.pend = null; st.pendLine = null; hint(); req(); }
 
-  async function open(container, url) {
+  async function open(container, url, extra) {
     close(); injectCss();
     var wrap = document.createElement('div'); wrap.className = 'dv-wrap';
     var cv = document.createElement('canvas'); wrap.appendChild(cv);
@@ -629,7 +635,8 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     cOk.onclick = function () { var c = st.cand; if (!c) return; var p = c.list[c.i]; st.cand = null; showCand(); tapAt(0, 0, false, p); };
     cNext.onclick = function () { var c = st.cand; if (!c) return; c.i = (c.i + 1) % c.list.length; showCand(); };
     cNo.onclick = function () { st.cand = null; showCand(); hint(); };
-    [['移動', 'pan'], ['寸法', 'dist'], ['角度', 'angle'], ['水平', 'rot'], ['元の向き', null, function () { setRot(0); hint(); }], ['線', 'line'], ['線消し', 'erase'], ['全体', null, fit], ['消す', null, clear]].forEach(function (b) {
+    [['移動', 'pan'], ['寸法', 'dist'], ['角度', 'angle'], ['水平', 'rot'], ['元の向き', null, function () { setRot(0); hint(); }], ['線', 'line'], ['線消し', 'erase'], ['全体', null, fit], ['消す', null, clear]].concat(extra || []).forEach(function (b) {
+      if (b.length === 2) b = [b[0], null, b[1]];
       var el = document.createElement('button'); el.type = 'button'; el.className = 'dv-btn'; el.textContent = b[0];
       if (b[1]) { el.dataset.mode = b[1]; el.setAttribute('aria-pressed', 'false'); el.onclick = function () { setMode(b[1]); }; }
       else el.onclick = b[2];
@@ -652,7 +659,8 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     st.wrap.remove(); st = null;
   }
 
-  window.DwgView = { open: open, close: close, setMode: setMode, fit: fit, clear: clear,
+  function setMarks(a) { if (!st) return; st.marks = a || []; req(); }
+  window.DwgView = { open: open, close: close, setMode: setMode, fit: fit, clear: clear, setMarks: setMarks, info: info,
     _state: function () { return st; } };
 })();
 
@@ -1208,6 +1216,7 @@ function productEdges(ids0){
 }
 // 色を付ける部材（製品の全部材、または部材 1 つ）
 function highlight(ids){
+  if (S.cogObj && !ids.some(i=>S.els[i].asm===S.cogObj.userData.asm)) showCog3d(-1);
   for (const i of S.selIds||[]) paint(S.els[i], baseCol(S.els[i]));
   S.selIds=ids; for (const i of ids) paint(S.els[i], ACC); productEdges(ids);
   isoRefresh();
@@ -1261,14 +1270,124 @@ function selectPart(ei, add){
   highlight(S.selParts.slice());
   markList(); req();
 }
-// 部材の重さ（形の体積×7.85、孔・切欠込み）
-function partKg(ei){
-  const e=S.els[ei], ch=S.chunks[e.grp][e.chunk]; if (!ch || !e.in) return 0; let v=0; const P=ch.pos, o=e.vo*3;
+// 部材の体積と重心（形の体積、孔・切欠込み）
+function partVol(ei){
+  const e=S.els[ei], ch=S.chunks[e.grp][e.chunk]; if (!ch || !e.in) return {v:0,c:[0,0,0]}; let v=0, cx=0, cy=0, cz=0; const P=ch.pos, o=e.vo*3;
   const q=(k,j)=>P[k+j]-P[o+j];   // 部材の 1 点を原点に（座標が大きいと桁落ちする）
   for (let t=e.io;t<e.io+e.in;t+=3){ const a=ch.idx[t]*3,b=ch.idx[t+1]*3,c=ch.idx[t+2]*3;
-    v += q(a,0)*(q(b,1)*q(c,2)-q(b,2)*q(c,1)) - q(a,1)*(q(b,0)*q(c,2)-q(b,2)*q(c,0)) + q(a,2)*(q(b,0)*q(c,1)-q(b,1)*q(c,0)); }
-  return Math.abs(v)/6*7.85e-6;
+    const dv = q(a,0)*(q(b,1)*q(c,2)-q(b,2)*q(c,1)) - q(a,1)*(q(b,0)*q(c,2)-q(b,2)*q(c,0)) + q(a,2)*(q(b,0)*q(c,1)-q(b,1)*q(c,0));
+    v+=dv; cx+=dv*(q(a,0)+q(b,0)+q(c,0)); cy+=dv*(q(a,1)+q(b,1)+q(c,1)); cz+=dv*(q(a,2)+q(b,2)+q(c,2)); }
+  if (Math.abs(v)<1e-9) return {v:0,c:[P[o],P[o+1],P[o+2]]};
+  return {v:Math.abs(v)/6, c:[P[o]+cx/(4*v), P[o+1]+cy/(4*v), P[o+2]+cz/(4*v)]};
 }
+// 部材の重さ（体積×7.85）
+function partKg(ei){ return partVol(ei).v*7.85e-6; }
+// 製品の重さと重心（ボルトは入れない）。香月さん 2026/10/16
+function asmMass(ai){
+  let V=0; const C=[0,0,0];
+  for (const i of S.asms[ai].els){ const e=S.els[i]; if (e.grp!=='main' || !S.chunks.main[e.chunk]) continue; const r=partVol(i); V+=r.v; for (let k=0;k<3;k++) C[k]+=r.v*r.c[k]; }
+  return V>0 ? {kg:V*7.85e-6, c:C.map(x=>x/V)} : null;
+}
+function kgTxt(kg){ return kg>=1000 ? kg.toFixed(0)+' kg' : kg.toFixed(1)+' kg'; }
+// 3D に重心の印（球と 3 方向の線。鋼材に隠れないように前に描く）
+function showCog3d(ai){
+  if (S.cogObj){ scene.remove(S.cogObj); S.cogObj.traverse(o=>{ if (o.geometry) o.geometry.dispose(); }); S.cogObj=null; }
+  if (ai===undefined || ai<0) { req(); return; }
+  const m=asmMass(ai); if (!m) return;
+  const b=boxOf(S.asms[ai].els), sz=b.getSize(new THREE.Vector3()), r=Math.max(15, sz.length()*0.012), c=new THREE.Vector3(...m.c);
+  const g=new THREE.Group(); g.userData.asm=ai;
+  const mat=new THREE.MeshBasicMaterial({color:0xff2bd6, depthTest:false, transparent:true, opacity:0.95});
+  const sp=new THREE.Mesh(new THREE.SphereGeometry(r,20,14), mat); sp.position.copy(c); sp.renderOrder=20; g.add(sp);
+  const P=[]; for (const [ax,L] of [[0,sz.x],[1,sz.y],[2,sz.z]]){ const h=Math.max(L/2+r*3, r*4); const a=c.clone(), d=c.clone(); a.setComponent(ax,a.getComponent(ax)-h); d.setComponent(ax,d.getComponent(ax)+h); P.push(a.x,a.y,a.z,d.x,d.y,d.z); }
+  const lg=new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P),3));
+  const ln=new THREE.LineSegments(lg, new THREE.LineBasicMaterial({color:0xff2bd6, depthTest:false, transparent:true})); ln.renderOrder=20; g.add(ln);
+  scene.add(g); S.cogObj=g; req();
+  hint('重心（ピンクの球）　製品重量 '+kgTxt(m.kg));
+}
+// 図面に重心を出す：製品の 3D の形を図面の各図に重ねて（向き・縮尺・位置を合わせて）、重心を写す
+function cogOnDrawing(a, d){
+  const m=asmMass(a.i); if (!m) return {marks:[], why:'3D の形が読めていません'};
+  // 合わせるのは大きい部材だけ（吊りピースなど小さい物は図面で省略・別の所に描くことがある）
+  const vols=new Map(); let vt=0; for (const i of a.els){ const e=S.els[i]; if (e.grp!=='main'||!S.chunks.main[e.chunk]) continue; const v=partVol(i).v; vols.set(i,v); vt+=v; }
+  const parts=[], pts=[];
+  for (const i of a.els){ const e=S.els[i]; if (e.grp!=='main') continue; const ch=S.chunks.main[e.chunk]; if (!ch || (vols.get(i)||0)<0.002*vt) continue;
+    const P=[]; for (let k=e.vo;k<e.vo+e.vn;k++){ const p=[ch.pos[k*3],ch.pos[k*3+1],ch.pos[k*3+2]]; P.push(p); pts.push(p); } parts.push(P); }
+  if (pts.length<4) return {marks:[], why:'3D の形が読めていません'};
+  // 見る向きの候補：製品の長い向き（平面）と X・Y の、立面・平面
+  let sxx=0,syy=0,sxy=0,mx=0,my=0; for (const p of pts){ mx+=p[0]; my+=p[1]; } mx/=pts.length; my/=pts.length;
+  for (const p of pts){ const x=p[0]-mx,y=p[1]-my; sxx+=x*x; syy+=y*y; sxy+=x*y; }
+  const th=0.5*Math.atan2(2*sxy, sxx-syy), hs=[[Math.cos(th),Math.sin(th)],[1,0],[0,1]].filter((h,i,A)=>A.findIndex(k=>Math.abs(k[0]*h[1]-k[1]*h[0])<0.02)===i);
+  const neg=v=>v.map(x=>-x), cands=[];
+  for (const [ux,uy] of hs){ const u=[ux,uy,0], w=[-uy,ux,0], Z=[0,0,1]; cands.push([u,Z],[neg(u),Z],[w,Z],[neg(w),Z],[u,w],[neg(u),neg(w)],[w,neg(u)],[neg(w),u]); }
+  { // 勾配材の平面（勾配の面で描いた図）と、斜めの材を材の向きで描いた図
+    let mz=0; for (const p of pts) mz+=p[2]; mz/=pts.length; const Cv=[[0,0,0],[0,0,0],[0,0,0]];
+    for (const p of pts){ const q=[p[0]-mx,p[1]-my,p[2]-mz]; for (let i=0;i<3;i++) for (let j=0;j<3;j++) Cv[i][j]+=q[i]*q[j]; }
+    let v=[Math.cos(th),Math.sin(th),0.1]; for (let it=0;it<60;it++){ const nv=[0,1,2].map(i=>Cv[i][0]*v[0]+Cv[i][1]*v[1]+Cv[i][2]*v[2]); const L=Math.hypot(...nv)||1; v=nv.map(x=>x/L); }
+    const hz=Math.hypot(v[0],v[1]);
+    if (hz>0.05 && Math.abs(v[2])>0.003){ const A=v, W=[-v[1]/hz, v[0]/hz, 0];
+      if (hz>0.5) cands.push([A,W],[neg(A),neg(W)],[W,neg(A)],[neg(W),A]);
+      const U=[-v[2]*v[0], -v[2]*v[1], 1-v[2]*v[2]], uL=Math.hypot(...U), U1=U.map(x=>x/uL); cands.push([A,U1],[neg(A),U1]); } }
+  const F=d.sheet||1, h=0.5*F, gs=[...new Set((d.S||[]).map(x=>+x[2].toFixed(6)))];
+  if (!gs.length) return {marks:[], why:'図面の縮尺が分かりません'};
+  // 図面の点（線の端・円の中心）を格子に
+  const grid=new Map(), key=(x,y)=>Math.round(x/h)*1000003+Math.round(y/h);
+  const addQ=(x,y)=>{ const k=key(x,y); if (!grid.has(k)) grid.set(k,[x,y]); };
+  for (const l of d.L){ addQ(l[0],l[1]); addQ(l[2],l[3]); } for (const c of d.C) addQ(c[0],c[1]);
+  const DQ=[...grid.values()];
+  const nearP=(x,y,R)=>{ const i=Math.round(x/h), j=Math.round(y/h); let b=R, r=null; for (let a2=-2;a2<=2;a2++) for (let b2=-2;b2<=2;b2++){ const q=grid.get((i+a2)*1000003+(j+b2)); if (q){ const dd=Math.hypot(q[0]-x,q[1]-y); if (dd<b){ b=dd; r=q; } } } return r; };
+  const hull2=pr=>{ pr=pr.slice().sort((p,q)=>p[0]-q[0]||p[1]-q[1]); const cr=(o,p,q)=>(p[0]-o[0])*(q[1]-o[1])-(p[1]-o[1])*(q[0]-o[0]);
+    const lo=[],up=[]; for (const p of pr){ while(lo.length>=2&&cr(lo[lo.length-2],lo[lo.length-1],p)<=0) lo.pop(); lo.push(p); }
+    for (let k=pr.length-1;k>=0;k--){ const p=pr[k]; while(up.length>=2&&cr(up[up.length-2],up[up.length-1],p)<=0) up.pop(); up.push(p); }
+    return lo.slice(0,-1).concat(up.slice(0,-1)); };
+  const res=[], W=Math.max(d.bbox[2]-d.bbox[0], d.bbox[3]-d.bbox[1]);
+  for (const [ax,ay] of cands) for (const g of gs){
+    const pj=p=>[(p[0]*ax[0]+p[1]*ax[1]+p[2]*ax[2])/g, (p[0]*ay[0]+p[1]*ay[1]+p[2]*ay[2])/g];
+    const step=Math.max(1, Math.floor(pts.length/4000)), pr=[]; for (let k=0;k<pts.length;k+=step) pr.push(pj(pts[k]));
+    const hull=hull2(pr); if (hull.length<3) continue;
+    let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity; for (const p of hull){ bx0=Math.min(bx0,p[0]); bx1=Math.max(bx1,p[0]); by0=Math.min(by0,p[1]); by1=Math.max(by1,p[1]); }
+    if (Math.max(bx1-bx0,by1-by0)>W) continue;   // 紙より大きい縮尺は除く
+    // 部材ごとの外形の角（確かめ用）：本当に合っていれば、見えている部材の角の多くが図面の点に乗る
+    const PH=[]; for (const P of parts){ const st=Math.max(1, Math.floor(P.length/400)), q=[]; for (let k=0;k<P.length;k+=st) q.push(pj(P[k])); for (const p of hull2(q)) PH.push(p); }
+    // 位置：製品全体の外形の角で投票
+    const vote=new Map(); for (const hp of hull) for (const q of DQ){ const k=key(q[0]-hp[0], q[1]-hp[1]); vote.set(k,(vote.get(k)||0)+1); }
+    const top=[...vote.entries()].filter(x=>x[1]>=Math.max(4, hull.length*0.4)).sort((x,y)=>y[1]-x[1]).slice(0,4);
+    const C0=pj(m.c);
+    for (const [k] of top){
+      const tx=Math.round(k/1000003)*h, ty=(k-Math.round(k/1000003)*1000003)*h;
+      let T=p=>[p[0]+tx, p[1]+ty];
+      const count=(TT,L,R)=>{ let n=0; for (const p of L){ const q=TT(p); if (nearP(q[0],q[1],R)) n++; } return n; };
+      const sc0=count(T,hull,2.0*h)/hull.length; if (sc0<0.4) continue;
+      // 図の中で少し回っている図（勾配材の平面など）：±2° を 0.1° → 0.01° 刻みで、部材の角が一番多く合う向き
+      if (sc0<0.9) { const Tb=T, H0=hull.map(Tb), cx0=H0.reduce((s_,p)=>s_+p[0],0)/H0.length, cy0=H0.reduce((s_,p)=>s_+p[1],0)/H0.length;
+        let best={n:count(Tb,PH,1.0*h), T:Tb};
+        const tryAng=an=>{ if (!an) return; const c=Math.cos(an), sn=Math.sin(an), Tr=p=>{ const q=Tb(p); return [cx0+(q[0]-cx0)*c-(q[1]-cy0)*sn, cy0+(q[0]-cx0)*sn+(q[1]-cy0)*c]; };
+          const vt=new Map(), RR=12; for (const p of hull){ const q=Tr(p), i0=Math.round(q[0]/h), j0=Math.round(q[1]/h);
+            for (let di=-RR;di<=RR;di++) for (let dj=-RR;dj<=RR;dj++){ const z=grid.get((i0+di)*1000003+(j0+dj)); if (!z) continue; const kk=Math.round((z[0]-q[0])/h)*1000003+Math.round((z[1]-q[1])/h); vt.set(kk,(vt.get(kk)||0)+1); } }
+          let bk=null, bn=0; for (const [kk,n] of vt) if (n>bn){ bn=n; bk=kk; } if (bk===null) return;
+          const ox=Math.round(bk/1000003)*h, oy=(bk-Math.round(bk/1000003)*1000003)*h, T2=p=>{ const q=Tr(p); return [q[0]+ox,q[1]+oy]; };
+          const n=count(T2,PH,1.0*h); if (n>best.n) best={n,T:T2,an}; };
+        for (let da=-20;da<=20;da++) tryAng(da*Math.PI/1800);
+        if (best.an!==undefined){ const a0=best.an; for (let da=-9;da<=9;da++) tryAng(a0+da*Math.PI/18000); }
+        T=best.T; }
+      // 細かい寄せ：合った角どうしの差の平均
+      { let sx=0, sy=0, nn=0; for (const p of PH){ const q=T(p), z=nearP(q[0],q[1],1.0*h); if (z){ sx+=z[0]-q[0]; sy+=z[1]-q[1]; nn++; } }
+        if (nn){ sx/=nn; sy/=nn; const T0=T; T=p=>{ const q=T0(p); return [q[0]+sx,q[1]+sy]; }; } }
+      const nOk=count(T,PH,0.5*h), fr=nOk/PH.length, hOk=count(T,hull,0.5*h)/hull.length;
+      if (window.__cogdbg) window.__cogdbg.push([cands.indexOf(cands.find(c=>c[0]===ax&&c[1]===ay)), g, PH.length, nOk, +fr.toFixed(2), +hOk.toFixed(2)]);
+      if (nOk<10 || hOk<0.35) continue;
+      const H2=hull.map(T), cg=T(C0);
+      let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity; for (const p of H2){ x0=Math.min(x0,p[0]); x1=Math.max(x1,p[0]); y0=Math.min(y0,p[1]); y1=Math.max(y1,p[1]); }
+      res.push({x:cg[0], y:cg[1], n:nOk, fr, box:[x0,y0,x1,y1]}); }
+  }
+  // 同じ所に重なった物は、部材の角の多く合った方だけ
+  res.sort((p,q)=>q.n-p.n || q.fr-p.fr); const out=[];
+  for (const r of res){ if (out.some(o=>{ const ix=Math.min(o.box[2],r.box[2])-Math.max(o.box[0],r.box[0]), iy=Math.min(o.box[3],r.box[3])-Math.max(o.box[1],r.box[1]); return ix>0&&iy>0; })) continue; out.push(r); }
+  // 製品が大きく見えている図で、一番よく合った図に近い合い方の物だけ（端から見た小さい図・断面は偶然合うことがあるので出さない）
+  const ext=r=>Math.max(r.box[2]-r.box[0], r.box[3]-r.box[1]), emax=Math.max(0,...out.map(ext)), fbest=Math.max(0,...out.map(r=>r.fr));
+  const nbest=Math.max(0,...out.map(r=>r.n)), out2=out.filter(r=>ext(r)>=0.5*emax && r.n>=0.5*nbest);
+  return {marks:out2.map(r=>({x:r.x,y:r.y,label:'重心'})), kg:m.kg, why:out2.length?'':'この図面では製品の図の向きが合わず、重心を出せませんでした（断面だけの図面など）'};
+}
+
 // 形鋼の断面の寸法（IFC の断面の数値。香月さん 2026/10/15）
 const PKIND={IShape:'H形',LShape:'山形',TShape:'T形',CircleHollow:'鋼管',Circle:'丸鋼',RectangleHollow:'角形鋼管',Rectangle:'平鋼・角',UShape:'溝形',CShape:'C形',ZShape:'Z形'};
 function profRows(e){
@@ -1284,7 +1403,7 @@ function profRows(e){
     else dims=j(Object.keys(p).filter(k=>!['kind','area','kgm'].includes(k)).map(k=>k+' '+f1(p[k])));
     h+='<dt>形</dt><dd>'+(PKIND[p.kind]||p.kind)+'</dd><dt>断面寸法</dt><dd>'+esc(dims)+'</dd>';
     const r=[p.r!==undefined?'r '+f1(p.r):'', p.r2!==undefined?'r2 '+f1(p.r2):''].filter(Boolean).join('　'); if (r) h+='<dt>R</dt><dd>'+r+'</dd>';
-    if (p.area) h+='<dt>断面積</dt><dd>'+p.area.toFixed(2)+' cm²（だいたい）</dd><dt>単位重量</dt><dd>'+p.kgm.toFixed(2)+' kg/m（だいたい）</dd>';
+    if (p.area) h+='<dt>断面積</dt><dd>'+p.area.toFixed(2)+' cm²（だいたい）</dd>';
   }
   const L=S.plen&&S.plen[e.part]; if (L && p) h+='<dt>長さ</dt><dd>'+f1(L)+' mm</dd>';
   return h;
@@ -1315,7 +1434,7 @@ function showCard(ei){
   if (partMode){
     h+='<div><div class="k">部材マーク</div><h2>'+esc(e.part||'（なし）')+'</h2><div class="k">製品 '+esc(a&&a.mark||'（なし）')+'</div></div>';
     const kg=partKg(ei);
-    h+='<dl><dt>名前</dt><dd>'+esc(e.name||'－')+'</dd><dt>断面</dt><dd>'+esc(e.profile||'－')+'</dd>'+profRows(e)+'<dt>材質</dt><dd>'+esc(e.mat||'－')+'</dd><dt>種類</dt><dd>'+(TYPE_JP[e.type]||e.type)+'</dd><dt>重量</dt><dd>'+(kg>0?kg.toFixed(1)+' kg（形から計算）':'－')+'</dd></dl>';
+    h+='<dl><dt>名前</dt><dd>'+esc(e.name||'－')+'</dd><dt>断面</dt><dd>'+esc(e.profile||'－')+'</dd>'+profRows(e)+'<dt>材質</dt><dd>'+esc(e.mat||'－')+'</dd><dt>種類</dt><dd>'+(TYPE_JP[e.type]||e.type)+'</dd><dt>部材重量</dt><dd>'+(kg>0?kgTxt(kg)+'（形から計算）':'－')+'</dd>'+(a&&asmMass(a.i)?'<dt>製品重量</dt><dd>'+kgTxt(asmMass(a.i).kg)+'</dd>':'')+'</dl>';
     if (a) h+='<div class="row">'+a.dwg.map(n=>'<button class="btn pri" data-dwg="'+esc(n)+'">図面 '+esc(n.replace(/\(.*\)$/,''))+'</button>').join('')+'</div>';
     h+='<div class="row"><button class="btn" id="pZoom">ズーム</button><button class="btn" id="cClose">閉じる</button></div>';
     card.innerHTML=h; card.hidden=false;
@@ -1326,15 +1445,17 @@ function showCard(ei){
   }
   if (a){ h+='<div><div class="k">製品マーク</div><h2>'+esc(a.mark||'（なし）')+'</h2></div>';
     h+='<div class="row">'+(a.dwg.length? a.dwg.map(n=>'<button class="btn pri" data-dwg="'+esc(n)+'">図面 '+esc(n.replace(/\(.*\)$/,''))+'</button>').join('') : '<span class="k">この製品の図面はありません</span>')+'</div>';
-    const nA=S.selAsms.length;
+    const nA=S.selAsms.length, am=asmMass(ai), pk=e&&e.grp==='main'?partKg(e.i):0;
+    h+='<dl>'+(am?'<dt>製品重量</dt><dd>'+kgTxt(am.kg)+'（形から計算・ボルト除く）</dd>':'')+(pk>0?'<dt>部材重量</dt><dd>'+kgTxt(pk)+'（'+esc(e.part||'タップした部材')+'）</dd>':'')+'</dl>';
     if (nA>1) h+='<div class="k">選択中 '+nA+' 製品：'+esc(S.selAsms.map(i=>S.asms[i].mark||'?').join('、'))+'</div>';
-    h+='<div class="row"><button class="btn" id="cZoom">ズーム</button><button class="btn" id="cIso">'+(S.iso&&S.iso.asm===ai?'全部表示':(nA>1?'選んだ製品だけ':'この製品だけ'))+'</button></div>'; }
+    h+='<div class="row"><button class="btn" id="cZoom">ズーム</button><button class="btn" id="cIso">'+(S.iso&&S.iso.asm===ai?'全部表示':(nA>1?'選んだ製品だけ':'この製品だけ'))+'</button><button class="btn" id="cCog" aria-pressed="'+String(!!(S.cogObj&&S.cogObj.userData.asm===ai))+'">重心</button></div>'; }
   if (e){ h+='<button class="btn" id="cMore" type="button">'+(S.showMore?'詳細を隠す':'詳細')+'</button><dl id="cDl"'+(S.showMore?'':' hidden')+'><dt>部材</dt><dd>'+esc(e.part||'－')+'</dd><dt>名前</dt><dd>'+esc(e.name||'－')+'</dd><dt>断面</dt><dd>'+esc(e.profile||'－')+'</dd>'+profRows(e)+'<dt>材質</dt><dd>'+esc(e.mat||'－')+'</dd><dt>種類</dt><dd>'+(TYPE_JP[e.type]||e.type)+'</dd></dl>'; }
   if (a && S.boltLoaded){ const s=boltSum(ai); if (s.length) h+='<div class="k">この製品のボルト</div><dl>'+s.map(([k,n])=>'<dt>'+esc(k)+'</dt><dd>'+n+' 本</dd>').join('')+'</dl>'; }
   h+='<div class="row"><button class="btn" id="cClose">閉じる</button></div>';
   card.innerHTML=h; card.hidden=false;
   card.querySelectorAll('[data-dwg]').forEach(b=>b.onclick=()=>openDwg(a, b.dataset.dwg));
   const z=$('#cZoom'); if (z) z.onclick=()=>fitBox(boxOf(S.selIds&&S.selIds.length?S.selIds:a.els));
+  const cg=$('#cCog'); if (cg) cg.onclick=()=>{ const on=!(S.cogObj&&S.cogObj.userData.asm===ai); showCog3d(on?ai:-1); cg.setAttribute('aria-pressed',String(on)); };
   const mo=$('#cMore'); if (mo) mo.onclick=()=>{ S.showMore=!S.showMore; $('#cDl').hidden=!S.showMore; mo.textContent=S.showMore?'詳細を隠す':'詳細'; };
   // 「この製品だけ」を押したら欄はすぐ閉じる（部材をタップすればまた出る。全部に戻すのは上の「全体」）
   const iso=$('#cIso'); if (iso) iso.onclick=()=>{ toggleIso(ai); card.hidden=true; hint(S.iso?'この製品だけ表示中（部材をタップで欄、上の「再表示」で全部に戻る）':undefined); };
@@ -1380,7 +1501,8 @@ function openDwg(a, name){
   if ($('#dwg').hidden && !S.dwgHist){ try{ history.pushState({dwg:1}, ''); S.dwgHist=true; }catch(e){} }
   $('#dwg').hidden=false; $('#dwgName').textContent=name;
   const sw=$('#dwgSw'); sw.innerHTML=''; if (a && a.dwg.length>1) a.dwg.forEach(n=>{ const b=document.createElement('button'); b.className='tb'; b.textContent=n.replace(/\(.*\)$/,''); b.setAttribute('aria-pressed',String(n===name)); b.onclick=()=>openDwg(a,n); sw.appendChild(b); });
-  (async()=>{ try{ DwgView.open($('#dwgbox'), decodeDwg(await gunzipBytes(S.bundles.main.files['dwg/'+name]))); }catch(err){ $('#dwgbox').textContent='図面が読めませんでした：'+(err.message||err); } })();
+  (async()=>{ try{ const dd=decodeDwg(await gunzipBytes(S.bundles.main.files['dwg/'+name])), aa=a||S.asms.find(x=>x.dwg.includes(name));
+    DwgView.open($('#dwgbox'), dd, aa&&window.COG2D?[['重心', ()=>{ const r=cogOnDrawing(aa, dd); DwgView.setMarks(r.marks); DwgView.info(r.marks.length?'重心（ピンクの印）　製品重量 '+kgTxt(r.kg):r.why); }]]:[]); }catch(err){ $('#dwgbox').textContent='図面が読めませんでした：'+(err.message||err); } })();
 }
 // 図面を閉じて 3D に戻る：表示の位置と 3D 画面の大きさを元に戻す（スマホで戻った後にボタンが見えなくなった）
 function closeDwg(){
