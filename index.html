@@ -1327,40 +1327,61 @@ function cogOnDrawing(a, d){
     if (hz>0.05 && Math.abs(v[2])>0.003){ const A=v, W=[-v[1]/hz, v[0]/hz, 0];
       if (hz>0.5) cands.push([A,W],[neg(A),neg(W)],[W,neg(A)],[neg(W),A]);
       const U=[-v[2]*v[0], -v[2]*v[1], 1-v[2]*v[2]], uL=Math.hypot(...U), U1=U.map(x=>x/uL); cands.push([A,U1],[neg(A),U1]); } }
-  const F=d.sheet||1, h=0.5*F, gs=[...new Set((d.S||[]).map(x=>+x[2].toFixed(6)))];
+  const F=d.sheet||1, h=0.5*F, gsAll=[...new Set((d.S||[]).map(x=>+x[2].toFixed(6)))];
+  // 試す縮尺は図面の主な縮尺（表題欄の縮尺＝製品の正面図・平面図）だけ。詳細図・断面の縮尺まで試すと遅い。主な縮尺の寸法が無い図面は全部
+  const gsMain=[...new Set((d.S||[]).filter(x=>x[3]===d.sheet).map(x=>+x[2].toFixed(6)))], gs=gsMain.length?gsMain:gsAll;
   if (!gs.length) return {marks:[], why:'図面の縮尺が分かりません'};
   // 図面の点（線の端・円の中心）を格子に
   const grid=new Map(), key=(x,y)=>Math.round(x/h)*1000003+Math.round(y/h);
   const addQ=(x,y)=>{ const k=key(x,y); if (!grid.has(k)) grid.set(k,[x,y]); };
   for (const l of d.L){ addQ(l[0],l[1]); addQ(l[2],l[3]); } for (const c of d.C) addQ(c[0],c[1]);
-  const DQ=[...grid.values()];
+  // 位置の投票に使う点は、長さ 3mm（紙の上）以上の線の端だけ（ボルトの印・矢印などの細かい線は数が多く遅くなる）
+  const DQ=[]; { const seen=new Set(); const add=(x,y)=>{ const k=key(x,y); if (!seen.has(k)){ seen.add(k); DQ.push([x,y]); } };
+    for (const l of d.L) if (Math.hypot(l[2]-l[0], l[3]-l[1])>=3*F){ add(l[0],l[1]); add(l[2],l[3]); } }
   const nearP=(x,y,R)=>{ const i=Math.round(x/h), j=Math.round(y/h); let b=R, r=null; for (let a2=-2;a2<=2;a2++) for (let b2=-2;b2<=2;b2++){ const q=grid.get((i+a2)*1000003+(j+b2)); if (q){ const dd=Math.hypot(q[0]-x,q[1]-y); if (dd<b){ b=dd; r=q; } } } return r; };
   const hull2=pr=>{ pr=pr.slice().sort((p,q)=>p[0]-q[0]||p[1]-q[1]); const cr=(o,p,q)=>(p[0]-o[0])*(q[1]-o[1])-(p[1]-o[1])*(q[0]-o[0]);
     const lo=[],up=[]; for (const p of pr){ while(lo.length>=2&&cr(lo[lo.length-2],lo[lo.length-1],p)<=0) lo.pop(); lo.push(p); }
     for (let k=pr.length-1;k>=0;k--){ const p=pr[k]; while(up.length>=2&&cr(up[up.length-2],up[up.length-1],p)<=0) up.pop(); up.push(p); }
     return lo.slice(0,-1).concat(up.slice(0,-1)); };
   const res=[], W=Math.max(d.bbox[2]-d.bbox[0], d.bbox[3]-d.bbox[1]);
+  // 図の中で紙の上で回して描いた図（斜材のフランジ側の図は材の勾配のまま描く）：長い線の多い向き（重みは長さ）
+  const lineAng=(()=>{ const bins=new Map(); for (const l of d.L){ const dx=l[2]-l[0], dy=l[3]-l[1], L=Math.hypot(dx,dy); if (L<15*F) continue; let a=Math.atan2(dy,dx); if (a<0) a+=Math.PI; if (a>=Math.PI) a-=Math.PI; const b=Math.round(a*180/Math.PI)%180, o=bins.get(b)||[0,0]; o[0]+=L; o[1]+=L*a; bins.set(b,o); }
+    // 水平・垂直に近い向き（±3°）は今までの候補と細かい回しで足りるので、斜めの向きだけ（遅くならないように）
+    return [...bins.values()].sort((p,q)=>q[0]-p[0]).slice(0,4).map(o=>o[1]/o[0]).filter(a=>{ const m=a%(Math.PI/2); return Math.min(m, Math.PI/2-m)>3*Math.PI/180; }); })();
+  const step=Math.max(1, Math.floor(pts.length/4000)), pend=[];
+  const count=(TT,L,R)=>{ let n=0; for (const p of L){ const q=TT(p); if (nearP(q[0],q[1],R)) n++; } return n; };
   for (const [ax,ay] of cands) for (const g of gs){
-    const pj=p=>[(p[0]*ax[0]+p[1]*ax[1]+p[2]*ax[2])/g, (p[0]*ay[0]+p[1]*ay[1]+p[2]*ay[2])/g];
-    const step=Math.max(1, Math.floor(pts.length/4000)), pr=[]; for (let k=0;k<pts.length;k+=step) pr.push(pj(pts[k]));
+    const pj0=p=>[(p[0]*ax[0]+p[1]*ax[1]+p[2]*ax[2])/g, (p[0]*ay[0]+p[1]*ay[1]+p[2]*ay[2])/g];
+    // この向きで写した形の長い向き → 図の長い線の向きに合わせて回す角度（0・180° は必ず）
+    const pr0=[]; for (let k=0;k<pts.length;k+=step) pr0.push(pj0(pts[k]));
+    let qx=0,qy=0; for (const p of pr0){ qx+=p[0]; qy+=p[1]; } qx/=pr0.length; qy/=pr0.length; let sxx2=0,syy2=0,sxy2=0; for (const p of pr0){ const x=p[0]-qx,y=p[1]-qy; sxx2+=x*x; syy2+=y*y; sxy2+=x*y; }
+    const al=0.5*Math.atan2(2*sxy2, sxx2-syy2), lam=Math.sqrt(((sxx2+syy2)/2+Math.hypot((sxx2-syy2)/2,sxy2))/Math.max(1e-9,(sxx2+syy2)/2-Math.hypot((sxx2-syy2)/2,sxy2)));
+    const rots=[0]; if (lam>2.5) for (const be of lineAng) for (const r0 of [be-al, be-al+Math.PI]){ const r=((r0%(2*Math.PI))+2*Math.PI)%(2*Math.PI); if (!rots.some(q=>{ const dd=Math.abs(q-r)%(2*Math.PI); return Math.min(dd,2*Math.PI-dd)<0.02; })) rots.push(r); }
+    for (const rot of rots){
+    const cr=Math.cos(rot), sr=Math.sin(rot), pj=p=>{ const q=pj0(p); return [q[0]*cr-q[1]*sr, q[0]*sr+q[1]*cr]; };
+    const pr=pr0.map(q=>[q[0]*cr-q[1]*sr, q[0]*sr+q[1]*cr]);
     const hull=hull2(pr); if (hull.length<3) continue;
     let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity; for (const p of hull){ bx0=Math.min(bx0,p[0]); bx1=Math.max(bx1,p[0]); by0=Math.min(by0,p[1]); by1=Math.max(by1,p[1]); }
     if (Math.max(bx1-bx0,by1-by0)>W) continue;   // 紙より大きい縮尺は除く
     // 部材ごとの外形の角（確かめ用）：本当に合っていれば、見えている部材の角の多くが図面の点に乗る
     const PH=[]; for (const P of parts){ const st=Math.max(1, Math.floor(P.length/400)), q=[]; for (let k=0;k<P.length;k+=st) q.push(pj(P[k])); for (const p of hull2(q)) PH.push(p); }
     // 位置：製品全体の外形の角で投票
-    const vote=new Map(); for (const hp of hull) for (const q of DQ){ const k=key(q[0]-hp[0], q[1]-hp[1]); vote.set(k,(vote.get(k)||0)+1); }
+    if (window.__cogStat){ window.__cogStat.c++; window.__cogStat.v+=hull.length*DQ.length; } const vote=new Map(); for (const hp of hull) for (const q of DQ){ const k=key(q[0]-hp[0], q[1]-hp[1]); vote.set(k,(vote.get(k)||0)+1); }
     const top=[...vote.entries()].filter(x=>x[1]>=Math.max(4, hull.length*0.4)).sort((x,y)=>y[1]-x[1]).slice(0,4);
     const C0=pj(m.c);
     for (const [k] of top){
       const tx=Math.round(k/1000003)*h, ty=(k-Math.round(k/1000003)*1000003)*h;
-      let T=p=>[p[0]+tx, p[1]+ty];
-      const count=(TT,L,R)=>{ let n=0; for (const p of L){ const q=TT(p); if (nearP(q[0],q[1],R)) n++; } return n; };
-      const sc0=count(T,hull,2.0*h)/hull.length; if (sc0<0.4) continue;
+      const T=p=>[p[0]+tx, p[1]+ty];
+      const sc0=count(T,hull,2.0*h)/hull.length; if (sc0<0.4 && !window.__cogLoose) continue;
+      pend.push({T, hull, PH, C0, sc0, n1:count(T,PH,1.0*h), ci:cands.findIndex(c=>c[0]===ax&&c[1]===ay), g, rot}); }
+  } }
+  // 細かい合わせ（少し回っている図の向き探し）は時間がかかるので、粗く合った数の多い物だけ（スマホで遅くならないように）
+  pend.sort((p,q)=>q.n1-p.n1);
+  pend.forEach((e,ip)=>{ let T=e.T; const hull=e.hull, PH=e.PH;
       // 図の中で少し回っている図（勾配材の平面など）：±2° を 0.1° → 0.01° 刻みで、部材の角が一番多く合う向き
-      if (sc0<0.9) { const Tb=T, H0=hull.map(Tb), cx0=H0.reduce((s_,p)=>s_+p[0],0)/H0.length, cy0=H0.reduce((s_,p)=>s_+p[1],0)/H0.length;
+      if (e.sc0<0.9 && ip<12) { const Tb=T, H0=hull.map(Tb), cx0=H0.reduce((s_,p)=>s_+p[0],0)/H0.length, cy0=H0.reduce((s_,p)=>s_+p[1],0)/H0.length;
         let best={n:count(Tb,PH,1.0*h), T:Tb};
-        const tryAng=an=>{ if (!an) return; const c=Math.cos(an), sn=Math.sin(an), Tr=p=>{ const q=Tb(p); return [cx0+(q[0]-cx0)*c-(q[1]-cy0)*sn, cy0+(q[0]-cx0)*sn+(q[1]-cy0)*c]; };
+        const tryAng=an=>{ if (!an) return; if (window.__cogStat) window.__cogStat.f+=hull.length*625+PH.length; const c=Math.cos(an), sn=Math.sin(an), Tr=p=>{ const q=Tb(p); return [cx0+(q[0]-cx0)*c-(q[1]-cy0)*sn, cy0+(q[0]-cx0)*sn+(q[1]-cy0)*c]; };
           const vt=new Map(), RR=12; for (const p of hull){ const q=Tr(p), i0=Math.round(q[0]/h), j0=Math.round(q[1]/h);
             for (let di=-RR;di<=RR;di++) for (let dj=-RR;dj<=RR;dj++){ const z=grid.get((i0+di)*1000003+(j0+dj)); if (!z) continue; const kk=Math.round((z[0]-q[0])/h)*1000003+Math.round((z[1]-q[1])/h); vt.set(kk,(vt.get(kk)||0)+1); } }
           let bk=null, bn=0; for (const [kk,n] of vt) if (n>bn){ bn=n; bk=kk; } if (bk===null) return;
@@ -1373,19 +1394,18 @@ function cogOnDrawing(a, d){
       { let sx=0, sy=0, nn=0; for (const p of PH){ const q=T(p), z=nearP(q[0],q[1],1.0*h); if (z){ sx+=z[0]-q[0]; sy+=z[1]-q[1]; nn++; } }
         if (nn){ sx/=nn; sy/=nn; const T0=T; T=p=>{ const q=T0(p); return [q[0]+sx,q[1]+sy]; }; } }
       const nOk=count(T,PH,0.5*h), fr=nOk/PH.length, hOk=count(T,hull,0.5*h)/hull.length;
-      if (window.__cogdbg) window.__cogdbg.push([cands.indexOf(cands.find(c=>c[0]===ax&&c[1]===ay)), g, PH.length, nOk, +fr.toFixed(2), +hOk.toFixed(2)]);
-      if (nOk<10 || hOk<0.35) continue;
-      const H2=hull.map(T), cg=T(C0);
+      if (window.__cogdbg) window.__cogdbg.push([e.ci, e.g, PH.length, nOk, +fr.toFixed(2), +hOk.toFixed(2)]);
+      if ((nOk<10 || hOk<0.35 || fr<0.135) && !window.__cogLoose) return;   // 部材の角の合う割合が低い物は偶然の重なり（2工区 158 枚で、ずれた物は 0.12 以下・正しい物は 0.14 以上）
+      const H2=hull.map(T), cg=T(e.C0);
       let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity; for (const p of H2){ x0=Math.min(x0,p[0]); x1=Math.max(x1,p[0]); y0=Math.min(y0,p[1]); y1=Math.max(y1,p[1]); }
-      res.push({x:cg[0], y:cg[1], n:nOk, fr, box:[x0,y0,x1,y1]}); }
-  }
+      res.push({x:cg[0], y:cg[1], n:nOk, fr, hOk, box:[x0,y0,x1,y1], hull:window.__cogdbg?H2:null, ci:e.ci, g:e.g, rot:+(e.rot*180/Math.PI).toFixed(1)}); });
   // 同じ所に重なった物は、部材の角の多く合った方だけ
   res.sort((p,q)=>q.n-p.n || q.fr-p.fr); const out=[];
   for (const r of res){ if (out.some(o=>{ const ix=Math.min(o.box[2],r.box[2])-Math.max(o.box[0],r.box[0]), iy=Math.min(o.box[3],r.box[3])-Math.max(o.box[1],r.box[1]); return ix>0&&iy>0; })) continue; out.push(r); }
   // 製品が大きく見えている図で、一番よく合った図に近い合い方の物だけ（端から見た小さい図・断面は偶然合うことがあるので出さない）
   const ext=r=>Math.max(r.box[2]-r.box[0], r.box[3]-r.box[1]), emax=Math.max(0,...out.map(ext)), fbest=Math.max(0,...out.map(r=>r.fr));
   const nbest=Math.max(0,...out.map(r=>r.n)), out2=out.filter(r=>ext(r)>=0.5*emax && r.n>=0.5*nbest);
-  return {marks:out2.map(r=>({x:r.x,y:r.y,label:'重心'})), kg:m.kg, why:out2.length?'':'この図面では製品の図の向きが合わず、重心を出せませんでした（断面だけの図面など）'};
+  return {marks:out2.map(r=>({x:r.x,y:r.y,label:'重心'})), dbg:window.__cogdbg?{out2, all:window.__cogLoose?res:out}:null, kg:m.kg, why:out2.length?'':'この図面では製品の図の向きが合わず、重心を出せませんでした（断面だけの図面など）'};
 }
 
 // 形鋼の断面の寸法（IFC の断面の数値。香月さん 2026/10/15）
@@ -1502,7 +1522,7 @@ function openDwg(a, name){
   $('#dwg').hidden=false; $('#dwgName').textContent=name;
   const sw=$('#dwgSw'); sw.innerHTML=''; if (a && a.dwg.length>1) a.dwg.forEach(n=>{ const b=document.createElement('button'); b.className='tb'; b.textContent=n.replace(/\(.*\)$/,''); b.setAttribute('aria-pressed',String(n===name)); b.onclick=()=>openDwg(a,n); sw.appendChild(b); });
   (async()=>{ try{ const dd=decodeDwg(await gunzipBytes(S.bundles.main.files['dwg/'+name])), aa=a||S.asms.find(x=>x.dwg.includes(name));
-    DwgView.open($('#dwgbox'), dd, aa&&window.COG2D?[['重心', ()=>{ const r=cogOnDrawing(aa, dd); DwgView.setMarks(r.marks); DwgView.info(r.marks.length?'重心（ピンクの印）　製品重量 '+kgTxt(r.kg):r.why); }]]:[]); }catch(err){ $('#dwgbox').textContent='図面が読めませんでした：'+(err.message||err); } })();
+    DwgView.open($('#dwgbox'), dd, aa?[['重心', ()=>{ const r=cogOnDrawing(aa, dd); DwgView.setMarks(r.marks); DwgView.info(r.marks.length?'重心（ピンクの印）　製品重量 '+kgTxt(r.kg):r.why); }]]:[]); }catch(err){ $('#dwgbox').textContent='図面が読めませんでした：'+(err.message||err); } })();
 }
 // 図面を閉じて 3D に戻る：表示の位置と 3D 画面の大きさを元に戻す（スマホで戻った後にボタンが見えなくなった）
 function closeDwg(){
