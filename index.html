@@ -636,7 +636,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     cNext.onclick = function () { var c = st.cand; if (!c) return; c.i = (c.i + 1) % c.list.length; showCand(); };
     cNo.onclick = function () { st.cand = null; showCand(); hint(); };
     [['移動', 'pan'], ['寸法', 'dist'], ['角度', 'angle'], ['水平', 'rot'], ['元の向き', null, function () { setRot(0); hint(); }], ['線', 'line'], ['線消し', 'erase'], ['全体', null, fit], ['消す', null, clear]].concat(extra || []).forEach(function (b) {
-      if (b.length === 2) b = [b[0], null, b[1]];
+      if (b.length === 2 && typeof b[1] === 'function') b = [b[0], null, b[1]];   // 追加ボタン（重心など）＝[名前, 関数]。モードのボタン [名前, モード] は変えない
       var el = document.createElement('button'); el.type = 'button'; el.className = 'dv-btn'; el.textContent = b[0];
       if (b[1]) { el.dataset.mode = b[1]; el.setAttribute('aria-pressed', 'false'); el.onclick = function () { setMode(b[1]); }; }
       else el.onclick = b[2];
