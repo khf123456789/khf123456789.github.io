@@ -1325,12 +1325,45 @@ function axList(x,y,touch){
   if (!ed) return L; const it={ed, d:ed.d};
   return (L.length && L[0].d<ed.d) ? [L[0], it, ...L.slice(1)] : [it, ...L];
 }
+// 材軸にする部材は自動で決めず選んでもらう（香月さん 2026/10/20）：起点 → 部材 → 相手の辺か点
+// 選んだ部材を光らせる面（緑・半透明）と、起点を通る材軸の薄い青の線
+const axGlowMat=new THREE.MeshBasicMaterial({color:0x22dd66, transparent:true, opacity:0.55, depthTest:true, polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1});
+function axGlow(i, P){
+  const e=S.els[i], ch=S.chunks[e.grp][e.chunk], g=new THREE.Group(), pos=new Float32Array(e.in*3);
+  for (let t=0;t<e.in;t++){ const v=ch.idx[e.io+t]*3; pos[t*3]=ch.pos[v]; pos[t*3+1]=ch.pos[v+1]; pos[t*3+2]=ch.pos[v+2]; }
+  const bg=new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const m=new THREE.Mesh(bg, axGlowMat); m.renderOrder=9; g.add(m);
+  const ax=elAxis(i), R=Math.max(ax.len*0.6, 500);
+  const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints([P.clone().addScaledVector(ax.u,-R), P.clone().addScaledVector(ax.u,R)]), new THREE.LineBasicMaterial({color:0x0a5cff, depthTest:false, transparent:true, opacity:0.35}));
+  l.renderOrder=10; g.add(l); measGroup.add(g); return g;
+}
+// 部材と点の一番近い所までの距離
+function elDist(i, P){
+  const e=S.els[i], ch=S.chunks[e.grp][e.chunk], tri=new THREE.Triangle(), q=new THREE.Vector3(); let best=Infinity;
+  for (let t=e.io; t<e.io+e.in; t+=3){ tri.a.fromArray(ch.pos,ch.idx[t]*3); tri.b.fromArray(ch.pos,ch.idx[t+1]*3); tri.c.fromArray(ch.pos,ch.idx[t+2]*3); tri.closestPointToPoint(P,q); const d=q.distanceTo(P); if (d<best) best=d; }
+  return best;
+}
+// 部材の候補：起点の点が乗っている部材を先に、触れている部材（1mm 以内）を次に。画面で起点の周りにある部材から探す
+function axMemList(it){
+  const r=cv.getBoundingClientRect(), s=toScreen(it.p), ids=new Set();
+  for (const R of [0,12,28]) for (let k=0;k<(R?8:1);k++){ const a=k*Math.PI/4, j=pickId(r.left+s.x+R*Math.cos(a), r.top+s.y+R*Math.sin(a)); if (j>=0 && j<S.els.length) ids.add(j); }
+  const own=(it.el!=null && it.el>=0 && it.el<S.els.length) ? it.el : -1;
+  const L=[...ids].filter(j=>j!==own).map(j=>({mem:j, d:elDist(j,it.p)})).filter(c=>c.d<1).sort((a,b)=>a.d-b.d);
+  return own>=0 ? [{mem:own, d:0}, ...L] : L;
+}
+function memName(i){ const e=S.els[i]; return esc([e.part, e.profile].filter(Boolean).join('　') || TYPE_JP[e.type] || '部材'); }
 function axTake(it){
+  if (it.mem!=null && (!S.pend || S.pend.u)) return;
   if (!S.pend){
-    if (it.el==null || it.el<0 || it.el>=S.els.length){ hint('部材の上の点をタップしてください'); return; }
-    const ax=elAxis(it.el), R=Math.max(ax.len*0.6, 500);
-    const g=lineObj([it.p.clone().addScaledVector(ax.u,-R), it.p.clone().addScaledVector(ax.u,R)], 0x0a5cff); g.material.opacity=0.35;   // 材軸の向きを細く見せておく
-    S.pend={a:it, u:ax.u.clone(), items:[{div:mkDiv('mk c0'),p:it.p}], objs:[g]}; hint('当てる辺（切り口）か点をタップ'); req(); return;
+    S.pend={a:it, u:null, items:[{div:mkDiv('mk c0'),p:it.p}], objs:[]};
+    const L=axMemList(it); req();
+    if (!L.length){ hint('材軸にする部材をタップ'); return; }
+    S.cand={list:L, i:0}; showCand(); hint('材軸にする部材を選んでください（「次の候補」で切り替え。ほかの部材をタップしても選べます）'); return;
+  }
+  if (!S.pend.u){   // 2 つ目：材軸にする部材
+    if (it.mem==null) return;
+    const ax=elAxis(it.mem); S.pend.u=ax.u.clone(); S.pend.mem=it.mem; S.pend.objs.push(axGlow(it.mem, S.pend.a.p));
+    hint('当てる辺（切り口）か点をタップ'); req(); return;
   }
   const a=S.pend.a, u=S.pend.u, P=a.p; let t, what, sub='', off=0;
   if (it.ed){
@@ -1689,7 +1722,7 @@ $('#bDwgClose').onclick=()=>{ if (S.dwgHist){ S.dwgHist=false; try{ history.back
 window.addEventListener('popstate', ()=>{ if (!$('#dwg').hidden){ S.dwgHist=false; closeDwg(); } });
 
 // ---------- 道具 ----------
-const HINT = {sel:'部材をタップすると製品が選ばれます。図面は右の欄から。面をダブルタップで正面に向く', dist:'1 点目をタップ（端点・線の交点・孔の中心・面の中心に吸い付きます）', vert:'鉛直：測り始めの点（角など）をタップ。次に、真上か真下にある辺か面をタップ', eang:'1 本目の辺をタップ', edist:'辺の間：1 本目の辺をタップ', fang:'1 つ目の面をタップ', axd:'材軸距離：測り始めの点（端点・孔の中心など）をタップ。その部材の材軸の向きに測ります', line:'線：1 点目をタップ（引いた線はこの端末に残ります）', erase:'線消し：消したい線の近くをタップ'};
+const HINT = {sel:'部材をタップすると製品が選ばれます。図面は右の欄から。面をダブルタップで正面に向く', dist:'1 点目をタップ（端点・線の交点・孔の中心・面の中心に吸い付きます）', vert:'鉛直：測り始めの点（角など）をタップ。次に、真上か真下にある辺か面をタップ', eang:'1 本目の辺をタップ', edist:'辺の間：1 本目の辺をタップ', fang:'1 つ目の面をタップ', axd:'材軸距離：測り始めの点（端点・孔の中心など）をタップ。次に材軸にする部材を選び、当てる辺か点をタップ', line:'線：1 点目をタップ（引いた線はこの端末に残ります）', erase:'線消し：消したい線の近くをタップ'};
 // ヒントは数秒で消える（画面を広く使う）
 let hintTimer=0;
 function hint(t){ const el=$('#hint'); el.textContent = t || HINT[S.mode]; el.hidden=false; clearTimeout(hintTimer); hintTimer=setTimeout(()=>{ el.hidden=true; }, 4000); }
@@ -1796,7 +1829,11 @@ function showCand(){
     $('#cbarT').innerHTML='<b>'+(c.kind==='edge'?'この辺':'この面')+'</b> を選びますか？'; $('#cNext').hidden=true; $('#cbar').hidden=false; req(); return;
   }
   const sn=c.list[c.i], more=c.list.length>1?'<span class="k">（候補 '+(c.i+1)+'/'+c.list.length+'）</span>':'';
-  if (sn.ed){   // 材軸距離の 2 つ目：辺と点が混ざった候補
+  if (sn.mem!=null){   // 材軸距離の 2 つ目：材軸にする部材（光らせて材軸の線も）
+    showHover(null); S.candObj=axGlow(sn.mem, S.pend?S.pend.a.p:new THREE.Vector3());
+    $('#cbarT').innerHTML='<b>'+memName(sn.mem)+'</b> の材軸にしますか？'+more; $('#cNext').hidden = c.list.length<2; $('#cbar').hidden=false; req(); return;
+  }
+  if (sn.ed){   // 材軸距離の 3 つ目：辺と点が混ざった候補
     showHover(null); S.candObj=lineObj([sn.ed.A,sn.ed.B],0xff8a1f);
     $('#cbarT').innerHTML='<b>この辺</b> を選びますか？'+more; $('#cNext').hidden = c.list.length<2; $('#cbar').hidden=false; req(); return;
   }
@@ -1807,7 +1844,7 @@ function showCand(){
 function endCand(){ S.cand=null; showCand(); }
 $('#cOk').onclick=()=>{ const c=S.cand; if (!c) return; endCand(); if (c.kind==='edge') takeEdge(c.v); else if (c.kind==='face') takeFace(c.v); else if (S.mode==='axd') axTake(c.list[c.i]); else pickPoint(c.list[c.i]); };
 $('#cNext').onclick=()=>{ const c=S.cand; if (!c || c.kind) return; c.i=(c.i+1)%c.list.length; showCand(); };
-$('#cNo').onclick=()=>{ endCand(); hint(!S.pend?undefined: S.mode==='axd'?'当てる辺（切り口）か点をタップ': S.mode==='fang'?'2 つ目の面をタップ': (S.mode==='eang'||S.mode==='edist')?'2 本目の辺をタップ':'2 点目をタップ'); };
+$('#cNo').onclick=()=>{ endCand(); hint(!S.pend?undefined: S.mode==='axd'?(S.pend.u?'当てる辺（切り口）か点をタップ':'材軸にする部材をタップ'): S.mode==='fang'?'2 つ目の面をタップ': (S.mode==='eang'||S.mode==='edist')?'2 本目の辺をタップ':'2 点目をタップ'); };
 function takeEdge(ed){
   if (!S.pend){ S.pend={e:ed, items:[], objs:[lineObj([ed.A,ed.B],0x9b1fd1)]}; hint('2 本目の辺をタップ'); req(); return; }
   const e1=S.pend.e; clearPend(); if (S.mode==='eang') addMeasureEdges(e1,ed); else addMeasureEdgeDist(e1,ed); hint();
@@ -1838,10 +1875,16 @@ function onTap(x,y,touch,add){
     }
     const sn=snap(x,y,false); if (!sn) return; pickPoint(sn); return;
   }
-  if (S.mode==='axd'){   // 材軸距離：1 つ目は点、2 つ目は辺か点
+  if (S.mode==='axd'){   // 材軸距離：1 つ目は点、2 つ目は材軸にする部材、3 つ目は辺か点
     if (!S.pend){
       if (touch){ const L=snapList(x,y,true); if (!L.length){ hint('ここには吸い付く点がありません'); return; } S.cand={list:L, i:0}; showCand(); return; }
       const sn=snap(x,y,false); if (!sn) return; axTake(sn); return;
+    }
+    if (!S.pend.u){   // 部材をタップ：マウスはすぐ決定、指は確認（周りの部材も候補に）
+      const id=pickId(x,y); if (id<0||id>=S.els.length){ hint('材軸にする部材をタップ'); return; }
+      if (!touch){ endCand(); axTake({mem:id}); return; }
+      const ids=[id]; for (const [dx,dy] of [[20,0],[-20,0],[0,20],[0,-20]]){ const j=pickId(x+dx,y+dy); if (j>=0 && j<S.els.length && !ids.includes(j)) ids.push(j); }
+      S.cand={list:ids.map(j=>({mem:j})), i:0}; showCand(); return;
     }
     const L=axList(x,y,touch); if (!L.length){ hint('ここには辺も点もありません'); return; }
     if (touch){ S.cand={list:L, i:0}; showCand(); return; }
@@ -1918,7 +1961,8 @@ cv.addEventListener('pointercancel', ()=>{ down=null; });
 cv.addEventListener('pointermove', e=>{
   if (e.pointerType!=='mouse' || e.buttons) return;
   if (S.mode==='eang' || S.mode==='edist' || (S.mode==='vert' && S.pend)){ if (hoverMk) showHover(null); const x=e.clientX, y=e.clientY; clearTimeout(raf); raf=setTimeout(()=>showEdgeHover(nearEdge(x,y,false)), 50); return; }
-  if (S.mode==='axd' && S.pend){   // 材軸距離の 2 つ目：近い方（辺か点）を先に見せる
+  if (S.mode==='axd' && S.pend && !S.pend.u){ if (hoverMk) showHover(null); if (edgeHover) showEdgeHover(null); return; }   // 部材を選ぶ間は吸い付きを出さない
+  if (S.mode==='axd' && S.pend){   // 材軸距離の 3 つ目：近い方（辺か点）を先に見せる
     const x=e.clientX, y=e.clientY; clearTimeout(raf);
     raf=setTimeout(()=>{ const c=axList(x,y,false)[0]; if (c && c.ed){ showHover(null); showEdgeHover(c.ed); } else { showEdgeHover(null); showHover(c||null); } }, 50); return;
   }
