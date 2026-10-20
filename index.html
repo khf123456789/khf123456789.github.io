@@ -323,7 +323,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
   var KN = { '中心': '円・孔の中心', '端点': '線の端点', '中点': '線の中点', '交点': '線の交点' };
   function showCand() {
     var c = st.cand;
-    if (!c) { st.cbar.hidden = true; st.hover = null; if (st.mode === 'axd') st.hoverLine = null; req(); return; }
+    if (!c) { st.cbar.hidden = true; st.hover = null; if (st.mode === 'axd' || st.mode === 'edist') st.hoverLine = null; req(); return; }
     var p = c.list[c.i]; st.hover = p.line ? null : p; st.hoverLine = p.line || null;   // 材軸距離の最後は線も候補
     st.cbarT.innerHTML = '<b>' + (p.line ? 'この線' : (KN[p.kind] || p.kind)) + '</b> を選びますか？' + (c.list.length > 1 ? '（候補 ' + (c.i + 1) + '/' + c.list.length + '）' : '');
     st.cNext.hidden = c.list.length < 2; st.cbar.hidden = false; req();
@@ -433,6 +433,14 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
         var c = w2s(m.at[0], m.at[1]);
         ctx.strokeStyle = ac; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(c[0], c[1]); ctx.lineTo(c[0] + 24, c[1] - 24); ctx.stroke();
         label(ctx, c[0] + 24, c[1] - 24, m.text, ac);
+      } else if (m.type === 'edist') {   // 辺の間：2 本の線と、その間の直角の線
+        [m.l1, m.l2].forEach(function (l) { var p = w2s(l[0], l[1]), q = w2s(l[2], l[3]); ctx.strokeStyle = ac; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke(); });
+        var ep = w2s(m.p[0], m.p[1]), eq = w2s(m.q[0], m.q[1]);
+        ctx.strokeStyle = ac; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(ep[0], ep[1]); ctx.lineTo(eq[0], eq[1]); ctx.stroke();
+        marker(ctx, ep, '交点', ac); marker(ctx, eq, '交点', ac);
+        var mx3 = (ep[0] + eq[0]) / 2, my3 = (ep[1] + eq[1]) / 2;
+        ctx.strokeStyle = ac; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(mx3, my3); ctx.lineTo(mx3 + 24, my3 - 24); ctx.stroke();
+        label(ctx, mx3 + 24, my3 - 24, m.text, ac);
       } else if (m.type === 'axd') {   // 材軸距離：起点 → 当たる所（点の時は直角のずれを点線で）
         var a2 = w2s(m.a.x, m.a.y), q2 = w2s(m.q[0], m.q[1]);
         if (m.b) { var b2 = w2s(m.b[0], m.b[1]); ctx.setLineDash([5, 4]); ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(q2[0], q2[1]); ctx.lineTo(b2[0], b2[1]); ctx.stroke(); ctx.setLineDash([]); }
@@ -474,6 +482,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     else if (st.mode === 'erase') info('線消し：消したい線の近くをタップ');
     else if (st.mode === 'dist') info(st.pend ? '2 点目をタップ（1 点目：' + (KN[st.pend.kind] || st.pend.kind) + '）' : '寸法：1 点目をタップ（孔の中心・線の端点・中点・交点に吸い付きます）');
     else if (st.mode === 'axd') info(!st.pend ? '材軸距離：測り始めの点をタップ' : !st.axLine ? '材軸にする線（測る向き）をタップ' : '当てる点か線をタップ（線は延長して当てます）');
+    else if (st.mode === 'edist') info(st.pendLine ? '2 本目の線をタップ（平行な線の間を測ります）' : '辺の間：1 本目の線をタップ');
     else if (st.mode === 'angle') info(st.pendLine ? '2 本目の線をタップ' : '角度：1 本目の線をタップ');
     else if (st.mode === 'rot') info('水平：水平にしたい線（勾配の辺など）をタップすると、図面全体を回します');
     else info('ドラッグで移動（マウスは中ボタンでも）、ホイール／2 本指で拡大');
@@ -549,17 +558,23 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
       }
       var tg = forced || null;
       if (!tg) {
-        var Lp = snapList(w[0], w[1], r), ln = pickLine(w[0], w[1], r, true), it = ln ? { line: ln, d: segDist(ln, w[0], w[1]) } : null;
+        var Lp = snapList(w[0], w[1], r), ln = pickLine(w[0], w[1], r, true), it = ln ? { line: ln, d: segDist(ln, w[0], w[1]), tx: w[0], ty: w[1] } : null;   // tx,ty：タップした所（平行な線の時に近い方の端を選ぶ）
         var Lt = it ? ((Lp.length && Lp[0].d < it.d) ? [Lp[0], it].concat(Lp.slice(1)) : [it].concat(Lp)) : Lp;   // 近い方を先に
         if (!Lt.length) { info('近くに点も線もありません'); return; }
         if (touch) { st.cand = { list: Lt, i: 0 }; showCand(); return; }
         tg = Lt[0];
       }
       var A0 = st.pend, al2 = st.axLine, ux2 = al2[2] - al2[0], uy2 = al2[3] - al2[1], ul2 = Math.hypot(ux2, uy2); ux2 /= ul2; uy2 /= ul2;
-      var t2, mm2 = { type: 'axd', a: A0 }, sub;
+      var t2, mm2 = { type: 'axd', a: A0 }, sub, parEnd = false;
+      if (tg.line) {
+        var lq = tg.line, qx = lq[2] - lq[0], qy = lq[3] - lq[1];
+        if (Math.abs(ux2 * qy - uy2 * qx) < 0.02 * (Math.hypot(qx, qy) || 1)) {   // 材軸と平行な線：タップした所に近い方の端点を相手の点にする（3D の切り口の面まで測るのと近い結果）
+          var tx = tg.tx != null ? tg.tx : (lq[0] + lq[2]) / 2, ty = tg.ty != null ? tg.ty : (lq[1] + lq[3]) / 2, e0 = Math.hypot(lq[0] - tx, lq[1] - ty) <= Math.hypot(lq[2] - tx, lq[3] - ty);
+          tg = { x: e0 ? lq[0] : lq[2], y: e0 ? lq[1] : lq[3], kind: '端点' }; parEnd = true; mm2.l2 = lq;
+        }
+      }
       if (tg.line) {   // 起点から材軸の向きに伸ばした直線と、その線（延長）の交点
         var l2 = tg.line, vx = l2[2] - l2[0], vy = l2[3] - l2[1], den2 = ux2 * vy - uy2 * vx, vl = Math.hypot(vx, vy) || 1;
-        if (Math.abs(den2) < 0.02 * vl) { info('材軸と平行な線です。別の点か線をタップしてください'); return; }
         t2 = ((l2[0] - A0.x) * vy - (l2[1] - A0.y) * vx) / den2; mm2.l2 = l2;
         var ag = Math.acos(Math.min(1, Math.abs(ux2 * vx + uy2 * vy) / vl)) * 180 / Math.PI; sub = '線との角度 ' + ag.toFixed(2) + '°';
       } else {
@@ -567,11 +582,32 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
       }
       mm2.q = [A0.x + ux2 * t2, A0.y + uy2 * t2];
       var sc2 = scaleAt((A0.x + mm2.q[0]) / 2, (A0.y + mm2.q[1]) / 2), g2 = sc2 ? sc2.g : 1;
-      if (mm2.b) { var off2 = Math.hypot(tg.x - mm2.q[0], tg.y - mm2.q[1]) * g2; sub = '直角のずれ ' + fmt(off2); if (off2 < 0.05) mm2.b = null; }
+      if (mm2.b) { var off2 = Math.hypot(tg.x - mm2.q[0], tg.y - mm2.q[1]) * g2; sub = (parEnd ? '平行な線の端まで　' : '') + '直角のずれ ' + fmt(off2); if (off2 < 0.05) mm2.b = null; }
       st.pend = null; st.axLine = null; st.hover = null; st.hoverLine = null;
       mm2.text = ['材軸 ' + fmt(Math.abs(t2) * g2), sub, sc2 ? '縮尺 1/' + sc2.n : '縮尺不明（図面の長さ）'];
       st.meas.push(mm2);
       info('材軸 <b>' + fmt(Math.abs(t2) * g2) + '</b>　' + sub + '　' + (sc2 ? '（縮尺 1/' + sc2.n + '）' : '（縮尺不明）'));
+      req(); return;
+    } else if (st.mode === 'edist') {   // 辺の間（3D と同じ名前）：1 本目の線 → 2 本目の線。平行（2° 以内）なら直角の距離
+      var le = forced ? forced.line : null;
+      if (!le) {
+        le = pickLine(w[0], w[1], r, true);
+        if (!le || Math.hypot(le[2] - le[0], le[3] - le[1]) < 1e-9) { info('線が見つかりません。線の上をタップしてください'); return; }
+        if (touch) { st.cand = { list: [{ line: le }], i: 0 }; showCand(); return; }   // 指：「この線」を確認してから
+      }
+      if (!st.pendLine) { st.pendLine = le; st.hoverLine = null; hint(); req(); return; }
+      var e1 = st.pendLine, ex = e1[2] - e1[0], ey = e1[3] - e1[1], el1 = Math.hypot(ex, ey), fx = le[2] - le[0], fy = le[3] - le[1], fl = Math.hypot(fx, fy);
+      ex /= el1; ey /= el1; fx /= fl; fy /= fl;
+      var ce = Math.abs(ex * fx + ey * fy), the = Math.acos(Math.min(1, ce)) * 180 / Math.PI;
+      if (the > 2) { info('平行ではありません（角度 ' + the.toFixed(2) + '°）。2 本目の線をタップし直してください'); st.hoverLine = null; req(); return; }
+      // 重なっている所の真ん中で、1 本目の上の点から 2 本目（延長）へ直角に
+      var s1 = (le[0] - e1[0]) * ex + (le[1] - e1[1]) * ey, s2 = (le[2] - e1[0]) * ex + (le[3] - e1[1]) * ey;
+      var lo = Math.max(0, Math.min(s1, s2)), hi = Math.min(el1, Math.max(s1, s2)), sm = lo <= hi ? (lo + hi) / 2 : el1 / 2;
+      var pe = [e1[0] + ex * sm, e1[1] + ey * sm], tq = (pe[0] - le[0]) * fx + (pe[1] - le[1]) * fy, qe = [le[0] + fx * tq, le[1] + fy * tq];
+      var sc3 = scaleAt((pe[0] + qe[0]) / 2, (pe[1] + qe[1]) / 2), g3 = sc3 ? sc3.g : 1, De = Math.hypot(qe[0] - pe[0], qe[1] - pe[1]) * g3;
+      st.pendLine = null; st.hoverLine = null;
+      st.meas.push({ type: 'edist', l1: e1, l2: le, p: pe, q: qe, text: ['辺の間 ' + fmt(De), '平行' + (the > 0.01 ? '（ずれ ' + the.toFixed(2) + '°）' : ''), sc3 ? '縮尺 1/' + sc3.n : '縮尺不明（図面の長さ）'] });
+      info('辺の間 <b>' + fmt(De) + '</b>　' + (sc3 ? '（縮尺 1/' + sc3.n + '）' : '（縮尺不明）'));
       req(); return;
     } else if (st.mode === 'rot') {
       var lr = pickLine(w[0], w[1], r);
@@ -641,7 +677,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
             var hr = 16 / st.s, hp0 = snap(w2[0], w2[1], hr), hl0 = pickLine(w2[0], w2[1], hr, true);
             if (hp0 && (!hl0 || hp0.d < segDist(hl0, w2[0], w2[1]))) { st.hover = hp0; st.hoverLine = null; } else { st.hover = null; st.hoverLine = hl0; }
           }
-          else if (st.mode === 'axd') { st.hoverLine = pickLine(w2[0], w2[1], 16 / st.s, true); st.hover = null; }
+          else if (st.mode === 'axd' || st.mode === 'edist') { st.hoverLine = pickLine(w2[0], w2[1], 16 / st.s, true); st.hover = null; }
           else { st.hoverLine = pickLine(w2[0], w2[1], 16 / st.s); st.hover = null; }
           req();
         }
@@ -693,7 +729,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     cOk.onclick = function () { var c = st.cand; if (!c) return; var p = c.list[c.i]; st.cand = null; showCand(); tapAt(0, 0, false, p); };
     cNext.onclick = function () { var c = st.cand; if (!c) return; c.i = (c.i + 1) % c.list.length; showCand(); };
     cNo.onclick = function () { st.cand = null; showCand(); hint(); };
-    [['移動', 'pan'], ['寸法', 'dist'], ['材軸距離', 'axd'], ['角度', 'angle'], ['水平', 'rot'], ['元の向き', null, function () { setRot(0); hint(); }],['全体', null, fit], ['消す', null, clear]].concat(extra || []).forEach(function (b) {
+    [['移動', 'pan'], ['寸法', 'dist'], ['辺の間', 'edist'], ['材軸距離', 'axd'], ['角度', 'angle'], ['水平', 'rot'], ['元の向き', null, function () { setRot(0); hint(); }],['全体', null, fit], ['消す', null, clear]].concat(extra || []).forEach(function (b) {
       if (b.length === 2 && typeof b[1] === 'function') b = [b[0], null, b[1]];   // 追加ボタン（重心など）＝[名前, 関数]。モードのボタン [名前, モード] は変えない
       var el = document.createElement('button'); el.type = 'button'; el.className = 'dv-btn'; el.textContent = b[0];
       if (b[1]) { el.dataset.mode = b[1]; el.setAttribute('aria-pressed', 'false'); el.onclick = function () { setMode(b[1]); }; }
