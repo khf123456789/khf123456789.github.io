@@ -126,8 +126,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
       <button class="tool" data-mode="edist" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 4h16M4 20h16M12 7v10M9 10l3-3 3 3M9 14l3 3 3-3"/></svg>辺の間</button>
       <button class="tool" data-mode="eang" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 20h16M4 20L16 6M11 20a7 7 0 0 0-2-5"/></svg>線角度</button>
       <button class="tool" data-mode="fang" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 18l9-4 9 4M12 14V3M3 18V9l9-6"/></svg>面角度</button>
-      <button class="tool" data-mode="line" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 20L20 4"/><circle cx="4" cy="20" r="2"/><circle cx="20" cy="4" r="2"/></svg>線</button>
-      <button class="tool" data-mode="erase" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 20L20 4M9 4l11 11"/></svg>線消し</button>
+      <button class="tool" data-mode="axd" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 9h12M3 15h12M15 6v12M5 12h14M16 9l3 3-3 3"/></svg>材軸距離</button>
       <button class="tool" id="bClear"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg>消す</button>
     </div>
     <aside id="drawer" hidden>
@@ -324,14 +323,14 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
   var KN = { '中心': '円・孔の中心', '端点': '線の端点', '中点': '線の中点', '交点': '線の交点' };
   function showCand() {
     var c = st.cand;
-    if (!c) { st.cbar.hidden = true; st.hover = null; req(); return; }
-    var p = c.list[c.i]; st.hover = p;
-    st.cbarT.innerHTML = '<b>' + (KN[p.kind] || p.kind) + '</b> を選びますか？' + (c.list.length > 1 ? '（候補 ' + (c.i + 1) + '/' + c.list.length + '）' : '');
+    if (!c) { st.cbar.hidden = true; st.hover = null; if (st.mode === 'axd') st.hoverLine = null; req(); return; }
+    var p = c.list[c.i]; st.hover = p.line ? null : p; st.hoverLine = p.line || null;   // 材軸距離の最後は線も候補
+    st.cbarT.innerHTML = '<b>' + (p.line ? 'この線' : (KN[p.kind] || p.kind)) + '</b> を選びますか？' + (c.list.length > 1 ? '（候補 ' + (c.i + 1) + '/' + c.list.length + '）' : '');
     st.cNext.hidden = c.list.length < 2; st.cbar.hidden = false; req();
   }
-  function pickLine(x, y, r) {
+  function pickLine(x, y, r, withLong) {   // withLong：長い線（芯線など）も見る（材軸距離）
     var best = null, bd = r;
-    near(st.ix, st.ix.segs, x, y, r).forEach(function (s) { var dd = segDist(s, x, y); if (dd < bd) { bd = dd; best = s; } });
+    near(st.ix, st.ix.segs, x, y, r).concat(withLong ? st.ix.longs : []).forEach(function (s) { var dd = segDist(s, x, y); if (dd < bd) { bd = dd; best = s; } });
     return best;
   }
   // 実寸の倍率：測った所に一番近い寸法の倍率
@@ -434,6 +433,15 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
         var c = w2s(m.at[0], m.at[1]);
         ctx.strokeStyle = ac; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(c[0], c[1]); ctx.lineTo(c[0] + 24, c[1] - 24); ctx.stroke();
         label(ctx, c[0] + 24, c[1] - 24, m.text, ac);
+      } else if (m.type === 'axd') {   // 材軸距離：起点 → 当たる所（点の時は直角のずれを点線で）
+        var a2 = w2s(m.a.x, m.a.y), q2 = w2s(m.q[0], m.q[1]);
+        if (m.b) { var b2 = w2s(m.b[0], m.b[1]); ctx.setLineDash([5, 4]); ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(q2[0], q2[1]); ctx.lineTo(b2[0], b2[1]); ctx.stroke(); ctx.setLineDash([]); }
+        if (m.l2) { var lp = w2s(m.l2[0], m.l2[1]), lq = w2s(m.l2[2], m.l2[3]); ctx.strokeStyle = ac; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(lp[0], lp[1]); ctx.lineTo(lq[0], lq[1]); ctx.stroke(); }
+        ctx.strokeStyle = ac; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(a2[0], a2[1]); ctx.lineTo(q2[0], q2[1]); ctx.stroke();
+        marker(ctx, a2, m.a.kind, ac); marker(ctx, q2, '交点', ac);
+        var mx2 = (a2[0] + q2[0]) / 2, my2 = (a2[1] + q2[1]) / 2;
+        ctx.strokeStyle = ac; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(mx2, my2); ctx.lineTo(mx2 + 24, my2 - 24); ctx.stroke();
+        label(ctx, mx2 + 24, my2 - 24, m.text, ac);
       }
     });
     (st.marks || []).forEach(function (mk) {   // 重心などの印（ピンク）
@@ -443,6 +451,12 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
       ctx.font = '600 13px system-ui,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillText(mk.label || '', p[0] + r + 4, p[1] - r - 2);
     });
     if (st.pend) { var p = w2s(st.pend.x, st.pend.y); marker(ctx, p, st.pend.kind, ac); }
+    if (st.pend && st.axLine) {   // 材軸距離：選んだ材軸の線と、起点から材軸の向きの細い線
+      var al = st.axLine, ap = w2s(al[0], al[1]), aq = w2s(al[2], al[3]), ux = al[2] - al[0], uy = al[3] - al[1], ul = Math.hypot(ux, uy) || 1, R = Math.hypot(st.d.bbox[2] - st.d.bbox[0], st.d.bbox[3] - st.d.bbox[1]);
+      ctx.strokeStyle = ac; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(ap[0], ap[1]); ctx.lineTo(aq[0], aq[1]); ctx.stroke();
+      var g0 = w2s(st.pend.x - ux / ul * R, st.pend.y - uy / ul * R), g1 = w2s(st.pend.x + ux / ul * R, st.pend.y + uy / ul * R);
+      ctx.setLineDash([6, 5]); ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(g0[0], g0[1]); ctx.lineTo(g1[0], g1[1]); ctx.stroke(); ctx.setLineDash([]);
+    }
     if (st.pendLine) {
       var l = st.pendLine, p1 = w2s(l[0], l[1]), q1 = w2s(l[2], l[3]);
       ctx.strokeStyle = ac; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(q1[0], q1[1]); ctx.stroke();
@@ -459,6 +473,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     if (st.mode === 'line') info(st.pend ? '線：2 点目をタップ' : '線：1 点目をタップ（引いた線はこの端末に図面ごとに残ります）');
     else if (st.mode === 'erase') info('線消し：消したい線の近くをタップ');
     else if (st.mode === 'dist') info(st.pend ? '2 点目をタップ（1 点目：' + (KN[st.pend.kind] || st.pend.kind) + '）' : '寸法：1 点目をタップ（孔の中心・線の端点・中点・交点に吸い付きます）');
+    else if (st.mode === 'axd') info(!st.pend ? '材軸距離：測り始めの点をタップ' : !st.axLine ? '材軸にする線（測る向き）をタップ' : '当てる点か線をタップ（線は延長して当てます）');
     else if (st.mode === 'angle') info(st.pendLine ? '2 本目の線をタップ' : '角度：1 本目の線をタップ');
     else if (st.mode === 'rot') info('水平：水平にしたい線（勾配の辺など）をタップすると、図面全体を回します');
     else info('ドラッグで移動（マウスは中ボタンでも）、ホイール／2 本指で拡大');
@@ -520,6 +535,44 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
         info('<b>' + fmt(L) + '</b>　水平 ' + fmt(dx) + '　垂直 ' + fmt(dy) + '　' + (sc ? '（縮尺 1/' + sc.n + '）' : '（縮尺不明）'));
         req(); return;
       }
+    } else if (st.mode === 'axd') {   // 材軸距離：起点の点 → 材軸の線 → 相手の点か線
+      if (!st.pend) {
+        var p0 = forced || null;
+        if (!p0 && touch) { var L0 = snapList(w[0], w[1], r); if (!L0.length) { info('近くに点がありません。線の端・中点・孔の近くをタップしてください'); return; } st.cand = { list: L0, i: 0 }; showCand(); return; }
+        if (!p0) { p0 = snap(w[0], w[1], r); if (!p0) { info('近くに点がありません。線の端・中点・孔の近くをクリックしてください'); return; } }
+        st.pend = p0; hint(); req(); return;
+      }
+      if (!st.axLine) {
+        var la = pickLine(w[0], w[1], r, true);
+        if (!la || Math.hypot(la[2] - la[0], la[3] - la[1]) < 1e-9) { info('線が見つかりません。材軸にする線の上をタップしてください'); return; }
+        st.axLine = la; st.hoverLine = null; hint(); req(); return;
+      }
+      var tg = forced || null;
+      if (!tg) {
+        var Lp = snapList(w[0], w[1], r), ln = pickLine(w[0], w[1], r, true), it = ln ? { line: ln, d: segDist(ln, w[0], w[1]) } : null;
+        var Lt = it ? ((Lp.length && Lp[0].d < it.d) ? [Lp[0], it].concat(Lp.slice(1)) : [it].concat(Lp)) : Lp;   // 近い方を先に
+        if (!Lt.length) { info('近くに点も線もありません'); return; }
+        if (touch) { st.cand = { list: Lt, i: 0 }; showCand(); return; }
+        tg = Lt[0];
+      }
+      var A0 = st.pend, al2 = st.axLine, ux2 = al2[2] - al2[0], uy2 = al2[3] - al2[1], ul2 = Math.hypot(ux2, uy2); ux2 /= ul2; uy2 /= ul2;
+      var t2, mm2 = { type: 'axd', a: A0 }, sub;
+      if (tg.line) {   // 起点から材軸の向きに伸ばした直線と、その線（延長）の交点
+        var l2 = tg.line, vx = l2[2] - l2[0], vy = l2[3] - l2[1], den2 = ux2 * vy - uy2 * vx, vl = Math.hypot(vx, vy) || 1;
+        if (Math.abs(den2) < 0.02 * vl) { info('材軸と平行な線です。別の点か線をタップしてください'); return; }
+        t2 = ((l2[0] - A0.x) * vy - (l2[1] - A0.y) * vx) / den2; mm2.l2 = l2;
+        var ag = Math.acos(Math.min(1, Math.abs(ux2 * vx + uy2 * vy) / vl)) * 180 / Math.PI; sub = '線との角度 ' + ag.toFixed(2) + '°';
+      } else {
+        t2 = (tg.x - A0.x) * ux2 + (tg.y - A0.y) * uy2; mm2.b = [tg.x, tg.y];
+      }
+      mm2.q = [A0.x + ux2 * t2, A0.y + uy2 * t2];
+      var sc2 = scaleAt((A0.x + mm2.q[0]) / 2, (A0.y + mm2.q[1]) / 2), g2 = sc2 ? sc2.g : 1;
+      if (mm2.b) { var off2 = Math.hypot(tg.x - mm2.q[0], tg.y - mm2.q[1]) * g2; sub = '直角のずれ ' + fmt(off2); if (off2 < 0.05) mm2.b = null; }
+      st.pend = null; st.axLine = null; st.hover = null; st.hoverLine = null;
+      mm2.text = ['材軸 ' + fmt(Math.abs(t2) * g2), sub, sc2 ? '縮尺 1/' + sc2.n : '縮尺不明（図面の長さ）'];
+      st.meas.push(mm2);
+      info('材軸 <b>' + fmt(Math.abs(t2) * g2) + '</b>　' + sub + '　' + (sc2 ? '（縮尺 1/' + sc2.n + '）' : '（縮尺不明）'));
+      req(); return;
     } else if (st.mode === 'rot') {
       var lr = pickLine(w[0], w[1], r);
       if (!lr) { info('線が見つかりません。水平にしたい線の上をタップしてください'); return; }
@@ -583,7 +636,12 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
         }
         if (e.pointerType === 'mouse' && st.mode !== 'pan') {   // マウスは吸い付き先を先に見せる
           var w2 = s2w(p[0], p[1]);
-          if (st.mode === 'dist' || st.mode === 'line') { st.hover = snap(w2[0], w2[1], 16 / st.s); st.hoverLine = null; }
+          if (st.mode === 'dist' || st.mode === 'line' || (st.mode === 'axd' && !st.pend)) { st.hover = snap(w2[0], w2[1], 16 / st.s); st.hoverLine = null; }
+          else if (st.mode === 'axd' && st.axLine) {   // 材軸距離の最後：近い方（点か線）
+            var hr = 16 / st.s, hp0 = snap(w2[0], w2[1], hr), hl0 = pickLine(w2[0], w2[1], hr, true);
+            if (hp0 && (!hl0 || hp0.d < segDist(hl0, w2[0], w2[1]))) { st.hover = hp0; st.hoverLine = null; } else { st.hover = null; st.hoverLine = hl0; }
+          }
+          else if (st.mode === 'axd') { st.hoverLine = pickLine(w2[0], w2[1], 16 / st.s, true); st.hover = null; }
           else { st.hoverLine = pickLine(w2[0], w2[1], 16 / st.s); st.hover = null; }
           req();
         }
@@ -611,11 +669,11 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
 
   function setMode(m) {
     if (!st) return;
-    st.mode = m; st.pend = null; st.pendLine = null; st.hover = null; st.hoverLine = null; st.cand = null; if (st.cbar) st.cbar.hidden = true;
+    st.mode = m; st.pend = null; st.pendLine = null; st.axLine = null; st.hover = null; st.hoverLine = null; st.cand = null; if (st.cbar) st.cbar.hidden = true;
     st.btns.forEach(function (b) { if (b.dataset.mode) b.setAttribute('aria-pressed', String(b.dataset.mode === m)); });
     hint(); req();
   }
-  function clear() { if (!st) return; st.meas = []; st.pend = null; st.pendLine = null; hint(); req(); }
+  function clear() { if (!st) return; st.meas = []; st.pend = null; st.pendLine = null; st.axLine = null; hint(); req(); }
 
   async function open(container, url, extra) {
     close(); injectCss();
@@ -635,7 +693,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     cOk.onclick = function () { var c = st.cand; if (!c) return; var p = c.list[c.i]; st.cand = null; showCand(); tapAt(0, 0, false, p); };
     cNext.onclick = function () { var c = st.cand; if (!c) return; c.i = (c.i + 1) % c.list.length; showCand(); };
     cNo.onclick = function () { st.cand = null; showCand(); hint(); };
-    [['移動', 'pan'], ['寸法', 'dist'], ['角度', 'angle'], ['水平', 'rot'], ['元の向き', null, function () { setRot(0); hint(); }], ['線', 'line'], ['線消し', 'erase'], ['全体', null, fit], ['消す', null, clear]].concat(extra || []).forEach(function (b) {
+    [['移動', 'pan'], ['寸法', 'dist'], ['材軸距離', 'axd'], ['角度', 'angle'], ['水平', 'rot'], ['元の向き', null, function () { setRot(0); hint(); }],['全体', null, fit], ['消す', null, clear]].concat(extra || []).forEach(function (b) {
       if (b.length === 2 && typeof b[1] === 'function') b = [b[0], null, b[1]];   // 追加ボタン（重心など）＝[名前, 関数]。モードのボタン [名前, モード] は変えない
       var el = document.createElement('button'); el.type = 'button'; el.className = 'dv-btn'; el.textContent = b[0];
       if (b[1]) { el.dataset.mode = b[1]; el.setAttribute('aria-pressed', 'false'); el.onclick = function () { setMode(b[1]); }; }
@@ -646,7 +704,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     try {
       var d = await loadJson(url);
       if (st !== me) return;
-      st.d = d; st.ix = buildIndex(d); st.lines = loadLines(d.name); buildPaths(); msg.remove();
+      st.d = d; st.ix = buildIndex(d); st.lines = []; buildPaths(); msg.remove();
       bindEvents(); resize(); setMode('dist');
     } catch (err) {
       if (st === me) msg.textContent = String(err.message || err);
@@ -833,7 +891,7 @@ async function startMain(){
   S.origin = meta.origin; S.prof = meta.prof || {}; S.plen = meta.plen || {}; S.asms = meta.asms.map((a,i)=>({...a, i, els:[]}));
   meta.els.forEach((r,i)=>{ const e={i,type:r[0],name:r[1],part:r[2],profile:r[3],mat:r[4],asm:r[5],grp:r[6],chunk:r[7],vo:r[8],vn:r[9],io:r[10],in:r[11],snaps:r[12],bolt:r[13]||null}; S.els.push(e); if (e.asm>=0) S.asms[e.asm].els.push(i); });
   await loadGroup('main', 0.05, 0.95);
-  progress(1,'表示します'); fitAll(); $('#load').remove(); buildList(); setMode('sel'); loadLines3();
+  progress(1,'表示します'); fitAll(); $('#load').remove(); buildList(); setMode('sel');
   if (S.edgesOn) buildModelEdges();
 }
 // 全体の角の線（面の角度 30° 以上の辺）。重いので最初は出さない（香月さん：めっちゃ重たい）。
@@ -1197,6 +1255,100 @@ function addMeasureFaces(f1_,f2){
   const l=lineObj([f1_.p,f2.p],0x9b1fd1);
   S.meas.push({objs:[l], items:[dotObj(f1_.p), dotObj(f2.p), lb]}); req();
 }
+// ---------- 材軸距離（香月さん 2026/10/20）：始めの点が乗っている部材の材軸の向きに、当てた辺の切り口の面か点までの距離 ----------
+// 材軸：データに材軸の向きが無いので、部材の頂点の主成分（一番ばらつく向き）。部材の長さ（plen）が分かる時は、その長さに一番近い向き（短い管の輪切りなど）
+// 3×3 の対称行列の固有値・固有ベクトル（ヤコビ法）。vec[i] が val[i] の向き
+function eig3(m){
+  let a=m.map(r=>r.slice()), v=[[1,0,0],[0,1,0],[0,0,1]];
+  for (let it=0; it<60; it++){
+    let p=0, q=1; if (Math.abs(a[0][2])>Math.abs(a[p][q])){ p=0; q=2; } if (Math.abs(a[1][2])>Math.abs(a[p][q])){ p=1; q=2; }
+    if (Math.abs(a[p][q]) <= 1e-12*(Math.abs(a[0][0])+Math.abs(a[1][1])+Math.abs(a[2][2])) || a[p][q]===0) break;
+    const th=(a[q][q]-a[p][p])/(2*a[p][q]), t=(th>=0?1:-1)/(Math.abs(th)+Math.sqrt(th*th+1)), c=1/Math.sqrt(t*t+1), s=t*c;
+    const J=[[1,0,0],[0,1,0],[0,0,1]]; J[p][p]=c; J[q][q]=c; J[p][q]=s; J[q][p]=-s;
+    const mul=(X,Y)=>X.map((r,i)=>[0,1,2].map(j=>r[0]*Y[0][j]+r[1]*Y[1][j]+r[2]*Y[2][j])), JT=[0,1,2].map(i=>[0,1,2].map(j=>J[j][i]));
+    a=mul(JT,mul(a,J)); v=mul(v,J);
+  }
+  return {val:[a[0][0],a[1][1],a[2][2]], vec:[0,1,2].map(j=>[v[0][j],v[1][j],v[2][j]])};
+}
+function pcaAxis(pos, vo, vn, len, idx, io, inn){
+  let cx=0, cy=0, cz=0; for (let k=vo;k<vo+vn;k++){ cx+=pos[k*3]; cy+=pos[k*3+1]; cz+=pos[k*3+2]; } cx/=vn; cy/=vn; cz/=vn;
+  const m=[[0,0,0],[0,0,0],[0,0,0]];
+  for (let k=vo;k<vo+vn;k++){ const d=[pos[k*3]-cx, pos[k*3+1]-cy, pos[k*3+2]-cz]; for (let i=0;i<3;i++) for (let j=0;j<3;j++) m[i][j]+=d[i]*d[j]; }
+  const E=eig3(m), ord=[0,1,2].sort((i,j)=>E.val[j]-E.val[i]);
+  const ext=ord.map(i=>{ const u=E.vec[i]; let lo=Infinity, hi=-Infinity; for (let k=vo;k<vo+vn;k++){ const t=pos[k*3]*u[0]+pos[k*3+1]*u[1]+pos[k*3+2]*u[2]; if (t<lo) lo=t; if (t>hi) hi=t; } return hi-lo; });
+  let k=0; if (len>0){ let bd=Infinity; ext.forEach((x,j)=>{ const d=Math.abs(x-len); if (d<bd-0.5){ bd=d; k=j; } }); }
+  let u=E.vec[ord[k]];
+  // 主成分は斜め切りの端などで少しずれる（φ216 L1500 の 30° 切りで 0.2°）→ その向きに近い辺（押し出しの側面の辺・板の長い辺）の向きの平均で直す
+  if (idx){
+    for (const lim of [5, 0.5]){
+      const cl=Math.cos(lim*Math.PI/180), s=[0,0,0];
+      for (let t=io; t<io+inn; t+=3) for (const [p,q] of [[idx[t],idx[t+1]],[idx[t+1],idx[t+2]],[idx[t+2],idx[t]]]){
+        const d=[pos[q*3]-pos[p*3], pos[q*3+1]-pos[p*3+1], pos[q*3+2]-pos[p*3+2]], l=Math.hypot(d[0],d[1],d[2]); if (l<1e-6) continue;
+        const c=(d[0]*u[0]+d[1]*u[1]+d[2]*u[2])/l; if (Math.abs(c)<cl) continue;
+        const w=c>0?1:-1; s[0]+=d[0]*w; s[1]+=d[1]*w; s[2]+=d[2]*w;   // 長い辺ほど重く
+      }
+      const sl=Math.hypot(s[0],s[1],s[2]); if (sl<1e-9) break; u=s.map(x=>x/sl);
+    }
+  }
+  let lo=Infinity, hi=-Infinity; for (let v=vo;v<vo+vn;v++){ const t=pos[v*3]*u[0]+pos[v*3+1]*u[1]+pos[v*3+2]*u[2]; if (t<lo) lo=t; if (t>hi) hi=t; }
+  return {u, c:[cx,cy,cz], len:hi-lo};
+}
+// 辺 AB に隣り合う三角形のうち、材軸 u に一番直角に近い面（＝切り口）の法線。辺の上に 2 つの頂点がある三角形を拾う（細かく割られた面でも）
+function cutFace(pos, idx, io, inn, A, B, u){
+  const ab=[B[0]-A[0], B[1]-A[1], B[2]-A[2]], L=Math.hypot(ab[0],ab[1],ab[2]); if (L<1e-6) return null;
+  const d=ab.map(x=>x/L), tol=Math.max(0.05, L*1e-4);
+  const onLine=k=>{ const w=[pos[k*3]-A[0], pos[k*3+1]-A[1], pos[k*3+2]-A[2]], t=w[0]*d[0]+w[1]*d[1]+w[2]*d[2];
+    return Math.hypot(w[0]-d[0]*t, w[1]-d[1]*t, w[2]-d[2]*t)<tol ? t : null; };
+  let best=null;
+  for (let t=io; t<io+inn; t+=3){
+    const v=[idx[t],idx[t+1],idx[t+2]], ts=v.map(onLine); let hit=false;
+    for (const [i,j] of [[0,1],[1,2],[2,0]]) if (ts[i]!==null && ts[j]!==null && Math.abs(ts[i]-ts[j])>tol && Math.min(ts[i],ts[j])<L-tol && Math.max(ts[i],ts[j])>tol) hit=true;
+    if (!hit) continue;
+    const P=v.map(k=>[pos[k*3],pos[k*3+1],pos[k*3+2]]), e1=[0,1,2].map(i=>P[1][i]-P[0][i]), e2=[0,1,2].map(i=>P[2][i]-P[0][i]);
+    const n=[e1[1]*e2[2]-e1[2]*e2[1], e1[2]*e2[0]-e1[0]*e2[2], e1[0]*e2[1]-e1[1]*e2[0]], nl=Math.hypot(n[0],n[1],n[2]); if (nl<1e-9) continue;
+    const c=Math.abs(n[0]*u[0]+n[1]*u[1]+n[2]*u[2])/nl; if (!best || c>best.c) best={n:n.map(x=>x/nl), c};
+  }
+  return best;
+}
+// 起点 P から材軸 u の向きに伸ばした直線が、点 A を通る法線 n の面に当たる所までの長さ（符号付き。面と平行なら null）
+function axisHit(P, u, A, n){ const nu=n[0]*u[0]+n[1]*u[1]+n[2]*u[2]; if (Math.abs(nu)<0.02) return null; return (n[0]*(A[0]-P[0])+n[1]*(A[1]-P[1])+n[2]*(A[2]-P[2]))/nu; }
+// ---- ここまでは THREE を使わない（単体で試せる）----
+S.axisCache=new Map();
+function elAxis(i){
+  if (S.axisCache.has(i)) return S.axisCache.get(i);
+  const e=S.els[i], ch=S.chunks[e.grp][e.chunk], r=pcaAxis(ch.pos, e.vo, e.vn, (S.plen&&S.plen[e.part])||0, ch.idx, e.io, e.in);
+  const o={u:new THREE.Vector3(...r.u).normalize(), len:r.len}; S.axisCache.set(i,o); return o;
+}
+// 2 つ目の候補：辺と点を、タップした所に近い順に（点は角・孔の中心を少し優先）
+function axList(x,y,touch){
+  const ed=nearEdge(x,y,touch); let L=snapList(x,y,touch); if (ed) L=L.filter(s=>s.k!==5);
+  if (!ed) return L; const it={ed, d:ed.d};
+  return (L.length && L[0].d<ed.d) ? [L[0], it, ...L.slice(1)] : [it, ...L];
+}
+function axTake(it){
+  if (!S.pend){
+    if (it.el==null || it.el<0 || it.el>=S.els.length){ hint('部材の上の点をタップしてください'); return; }
+    const ax=elAxis(it.el), R=Math.max(ax.len*0.6, 500);
+    const g=lineObj([it.p.clone().addScaledVector(ax.u,-R), it.p.clone().addScaledVector(ax.u,R)], 0x0a5cff); g.material.opacity=0.35;   // 材軸の向きを細く見せておく
+    S.pend={a:it, u:ax.u.clone(), items:[{div:mkDiv('mk c0'),p:it.p}], objs:[g]}; hint('当てる辺（切り口）か点をタップ'); req(); return;
+  }
+  const a=S.pend.a, u=S.pend.u, P=a.p; let t, what, sub='', off=0;
+  if (it.ed){
+    const e=S.els[it.ed.el], ch=S.chunks[e.grp][e.chunk], f=cutFace(ch.pos, ch.idx, e.io, e.in, it.ed.A.toArray(), it.ed.B.toArray(), u.toArray());
+    t = f ? axisHit(P.toArray(), u.toArray(), it.ed.A.toArray(), f.n) : null;
+    if (t===null){ hint('この辺の面は材軸と平行で、当たりません。別の辺か点をタップ'); return; }
+    what='辺の切り口'; sub='切り口の傾き '+(Math.acos(Math.min(1,f.c))*180/Math.PI).toFixed(2)+'°';
+  } else { t=it.p.clone().sub(P).dot(u); what=KIND[it.k]; }
+  const Q=P.clone().addScaledVector(u,t);
+  if (!it.ed){ off=it.p.distanceTo(Q); if (off>0.05) sub='直角のずれ '+f1(off); }
+  if (Math.abs(t)<0.05){ hint('起点と同じ位置です。別の辺か点をタップ'); return; }
+  clearPend(); showEdgeHover(null); showHover(null);
+  const objs=[lineObj([P,Q],0x0a5cff)];
+  if (it.ed) objs.push(lineObj([it.ed.A,it.ed.B],0x9b1fd1)); else if (off>0.05) objs.push(lineObj([Q,it.p],0x9b1fd1));
+  const items=[dotObj(P), dotObj(Q)];
+  items.push({div:mkDiv('lb','材軸 <b>'+f1(Math.abs(t))+'</b> mm<i>'+KIND[a.k]+' → '+what+'</i>'+(sub?'<i>'+sub+'</i>':'')), p:P.clone().lerp(Q,.5)});
+  S.meas.push({objs, items}); req(); hint();
+}
 function clearPend(){ if (!S.pend) return; for (const o of S.pend.objs||[]) measGroup.remove(o); for (const it of S.pend.items) it.div.remove(); S.pend=null; req(); }
 function clearAll(){ clearPend(); for (const m of S.meas){ for (const o of m.objs) measGroup.remove(o); for (const it of m.items) it.div.remove(); } S.meas=[]; req(); hint(); }
 
@@ -1537,7 +1689,7 @@ $('#bDwgClose').onclick=()=>{ if (S.dwgHist){ S.dwgHist=false; try{ history.back
 window.addEventListener('popstate', ()=>{ if (!$('#dwg').hidden){ S.dwgHist=false; closeDwg(); } });
 
 // ---------- 道具 ----------
-const HINT = {sel:'部材をタップすると製品が選ばれます。図面は右の欄から。面をダブルタップで正面に向く', dist:'1 点目をタップ（端点・線の交点・孔の中心・面の中心に吸い付きます）', vert:'鉛直：測り始めの点（角など）をタップ。次に、真上か真下にある辺か面をタップ', eang:'1 本目の辺をタップ', edist:'辺の間：1 本目の辺をタップ', fang:'1 つ目の面をタップ', line:'線：1 点目をタップ（引いた線はこの端末に残ります）', erase:'線消し：消したい線の近くをタップ'};
+const HINT = {sel:'部材をタップすると製品が選ばれます。図面は右の欄から。面をダブルタップで正面に向く', dist:'1 点目をタップ（端点・線の交点・孔の中心・面の中心に吸い付きます）', vert:'鉛直：測り始めの点（角など）をタップ。次に、真上か真下にある辺か面をタップ', eang:'1 本目の辺をタップ', edist:'辺の間：1 本目の辺をタップ', fang:'1 つ目の面をタップ', axd:'材軸距離：測り始めの点（端点・孔の中心など）をタップ。その部材の材軸の向きに測ります', line:'線：1 点目をタップ（引いた線はこの端末に残ります）', erase:'線消し：消したい線の近くをタップ'};
 // ヒントは数秒で消える（画面を広く使う）
 let hintTimer=0;
 function hint(t){ const el=$('#hint'); el.textContent = t || HINT[S.mode]; el.hidden=false; clearTimeout(hintTimer); hintTimer=setTimeout(()=>{ el.hidden=true; }, 4000); }
@@ -1643,14 +1795,19 @@ function showCand(){
     else { showHover({p:c.v.p, k:2}); hoverMk.div.innerHTML='<span>この面</span>'; }
     $('#cbarT').innerHTML='<b>'+(c.kind==='edge'?'この辺':'この面')+'</b> を選びますか？'; $('#cNext').hidden=true; $('#cbar').hidden=false; req(); return;
   }
-  const sn=c.list[c.i]; showHover(sn);
-  $('#cbarT').innerHTML='<b>'+KIND[sn.k]+'</b> を選びますか？'+(c.list.length>1?'<span class="k">（候補 '+(c.i+1)+'/'+c.list.length+'）</span>':'');
+  const sn=c.list[c.i], more=c.list.length>1?'<span class="k">（候補 '+(c.i+1)+'/'+c.list.length+'）</span>':'';
+  if (sn.ed){   // 材軸距離の 2 つ目：辺と点が混ざった候補
+    showHover(null); S.candObj=lineObj([sn.ed.A,sn.ed.B],0xff8a1f);
+    $('#cbarT').innerHTML='<b>この辺</b> を選びますか？'+more; $('#cNext').hidden = c.list.length<2; $('#cbar').hidden=false; req(); return;
+  }
+  showHover(sn);
+  $('#cbarT').innerHTML='<b>'+KIND[sn.k]+'</b> を選びますか？'+more;
   $('#cNext').hidden = c.list.length<2; $('#cbar').hidden=false;
 }
 function endCand(){ S.cand=null; showCand(); }
-$('#cOk').onclick=()=>{ const c=S.cand; if (!c) return; endCand(); if (c.kind==='edge') takeEdge(c.v); else if (c.kind==='face') takeFace(c.v); else pickPoint(c.list[c.i]); };
+$('#cOk').onclick=()=>{ const c=S.cand; if (!c) return; endCand(); if (c.kind==='edge') takeEdge(c.v); else if (c.kind==='face') takeFace(c.v); else if (S.mode==='axd') axTake(c.list[c.i]); else pickPoint(c.list[c.i]); };
 $('#cNext').onclick=()=>{ const c=S.cand; if (!c || c.kind) return; c.i=(c.i+1)%c.list.length; showCand(); };
-$('#cNo').onclick=()=>{ endCand(); hint(!S.pend?undefined: S.mode==='fang'?'2 つ目の面をタップ': (S.mode==='eang'||S.mode==='edist')?'2 本目の辺をタップ':'2 点目をタップ'); };
+$('#cNo').onclick=()=>{ endCand(); hint(!S.pend?undefined: S.mode==='axd'?'当てる辺（切り口）か点をタップ': S.mode==='fang'?'2 つ目の面をタップ': (S.mode==='eang'||S.mode==='edist')?'2 本目の辺をタップ':'2 点目をタップ'); };
 function takeEdge(ed){
   if (!S.pend){ S.pend={e:ed, items:[], objs:[lineObj([ed.A,ed.B],0x9b1fd1)]}; hint('2 本目の辺をタップ'); req(); return; }
   const e1=S.pend.e; clearPend(); if (S.mode==='eang') addMeasureEdges(e1,ed); else addMeasureEdgeDist(e1,ed); hint();
@@ -1680,6 +1837,15 @@ function onTap(x,y,touch,add){
       S.cand={list:L, i:0}; showCand(); return;
     }
     const sn=snap(x,y,false); if (!sn) return; pickPoint(sn); return;
+  }
+  if (S.mode==='axd'){   // 材軸距離：1 つ目は点、2 つ目は辺か点
+    if (!S.pend){
+      if (touch){ const L=snapList(x,y,true); if (!L.length){ hint('ここには吸い付く点がありません'); return; } S.cand={list:L, i:0}; showCand(); return; }
+      const sn=snap(x,y,false); if (!sn) return; axTake(sn); return;
+    }
+    const L=axList(x,y,touch); if (!L.length){ hint('ここには辺も点もありません'); return; }
+    if (touch){ S.cand={list:L, i:0}; showCand(); return; }
+    axTake(L[0]); return;
   }
   if (S.mode==='eang' || S.mode==='edist'){
     const ed=nearEdge(x,y,touch); if (!ed){ if (touch) hint('ここには辺がありません'); return; }
@@ -1752,8 +1918,12 @@ cv.addEventListener('pointercancel', ()=>{ down=null; });
 cv.addEventListener('pointermove', e=>{
   if (e.pointerType!=='mouse' || e.buttons) return;
   if (S.mode==='eang' || S.mode==='edist' || (S.mode==='vert' && S.pend)){ if (hoverMk) showHover(null); const x=e.clientX, y=e.clientY; clearTimeout(raf); raf=setTimeout(()=>showEdgeHover(nearEdge(x,y,false)), 50); return; }
+  if (S.mode==='axd' && S.pend){   // 材軸距離の 2 つ目：近い方（辺か点）を先に見せる
+    const x=e.clientX, y=e.clientY; clearTimeout(raf);
+    raf=setTimeout(()=>{ const c=axList(x,y,false)[0]; if (c && c.ed){ showHover(null); showEdgeHover(c.ed); } else { showEdgeHover(null); showHover(c||null); } }, 50); return;
+  }
   if (edgeHover) showEdgeHover(null);
-  if (S.mode!=='dist' && S.mode!=='line' && S.mode!=='vert'){ if (hoverMk) showHover(null); return; }
+  if (S.mode!=='dist' && S.mode!=='line' && S.mode!=='vert' && S.mode!=='axd'){ if (hoverMk) showHover(null); return; }
   const x=e.clientX, y=e.clientY; clearTimeout(raf); raf=setTimeout(()=>showHover(snap(x,y,false)), 50);
 });
 document.addEventListener('keydown', e=>{ if (e.key==='Escape'){ clearPend(); hint(); } });
