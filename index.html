@@ -796,8 +796,33 @@ function applySpeeds(){
   const zk=Math.pow(2,((S.zoomLv||4)-5)/2);
   controls.zoomSpeed = (m ? 1.2*zf : (iso ? 0.8 : 0.4))*zk;
   controls.rotateSpeed = (m ? 1.0 : 0.5) * (iso ? 0.7 : f);
-  controls.panSpeed = (m ? 1.0 : (iso ? 1.3 : 0.75)) * f;
+  // 移動：回る中心に近すぎると極端に遅くなるので、中心まで少なくとも zoomFloor() ある時の速さにする
+  controls.panSpeed = (m ? 1.0 : (iso ? 1.3 : 0.75)) * f * Math.max(1, zoomFloor()/Math.max(d,1));
 }
+// 近づく時の下限の距離（香月さん 2026/10/22：手前の製品の近くで拡大が進まず通り越せない）
+// 回る中心（カーソルの下の点）までがこれより近い時は、この距離にある物へ近づく時と同じ速さで前へ進む。見えている物の大きさの 1/4（30cm〜4m）
+function zoomFloor(){
+  let R=S.modelR||5000;
+  if (S.iso){ if (!S.iso.zr) S.iso.zr=boxOf(S.iso.ids).getSize(new THREE.Vector3()).length()/2||5000; R=S.iso.zr; }
+  return Math.min(4000, Math.max(300, R*0.25));
+}
+// 2 本指の拡大：中心に近い時は、上と同じ下限で中心ごと前へ送る（OrbitControls は中心に向けて縮めるだけなので、近づくほど止まる）
+const pinchPtrs=new Set();
+cv.addEventListener('pointerdown', e=>{ if (e.pointerType!=='mouse') pinchPtrs.add(e.pointerId); }, {capture:true});
+for (const t of ['pointerup','pointercancel']) window.addEventListener(t, e=>{ pinchPtrs.delete(e.pointerId); }, {capture:true});   // 指が画面の外で離れても消す
+controls.addEventListener('change', ()=>{
+  const d=camera.position.distanceTo(controls.target), pinch=pinchPtrs.size>=2 && !S.ortho;
+  if (pinch && S.pinchD && d<S.pinchD){
+    const fl=zoomFloor();
+    if (S.pinchD<fl){
+      const ex=(1-d/S.pinchD)*(fl-S.pinchD), dir=controls.target.clone().sub(camera.position).normalize();
+      camera.position.addScaledVector(dir,ex); controls.target.addScaledVector(dir,ex);
+      if (d<50) controls.target.copy(camera.position).addScaledVector(dir,50);   // 中心がカメラに重ならないように
+      req();
+    }
+  }
+  S.pinchD = pinch ? camera.position.distanceTo(controls.target) : 0;
+});
 cv.addEventListener('pointerdown', e=>{ S.ptrMouse = e.pointerType==='mouse'; applySpeeds(); }, {capture:true});
 // ホイールだけ回した時もマウスの速さに（クリック前は指の遅い速さになっていた）
 cv.addEventListener('wheel', ()=>{ S.ptrMouse = true; applySpeeds(); }, {capture:true, passive:true});
@@ -817,6 +842,16 @@ cv.addEventListener('wheel', e=>{
   }
   wheelAt={x:e.clientX, y:e.clientY, t:performance.now(), p};
   const zs=Math.pow(0.95, controls.zoomSpeed), k=e.deltaY<0 ? zs : 1/zs;
+  // 近づく時：カーソルの下の点が近すぎる（または通り越した）時は、点に向けて縮めず、カーソルの向きへ前に送る（手前の製品を通り抜けて奥へ行ける：香月さん 2026/10/22）
+  if (k<1 && !S.ortho){
+    const r=cv.getBoundingClientRect(), rr=new THREE.Raycaster(); rr.setFromCamera(new THREE.Vector2((e.clientX-r.left)/r.width*2-1, -(e.clientY-r.top)/r.height*2+1), camera);
+    const rd=rr.ray.direction, dp=p.clone().sub(camera.position).dot(rd), fl=zoomFloor();
+    if (dp<fl){
+      const st=(1-k)*fl; camera.position.addScaledVector(rd,st); controls.target.addScaledVector(rd,st);
+      if (dp<st*2) wheelAt=null;   // 点を通り越したら、次は奥の物を探し直す
+      controls.update(); return;
+    }
+  }
   camera.position.sub(p).multiplyScalar(k).add(p);
   controls.target.sub(p).multiplyScalar(k).add(p);
   controls.update();
