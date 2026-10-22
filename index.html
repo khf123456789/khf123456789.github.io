@@ -1704,6 +1704,20 @@ function showBoltCard(e, a){
   $('#pZoom').onclick=()=>fitBox(boxOf([e.i]));
   $('#cClose').onclick=()=>{ card.hidden=true; selectAsm(-1); };
 }
+// 製品の全長（香月さん 2026/10/22）：製品の中で一番長い部材（長さ plen、無ければ材軸の向きの広がり）の材軸を製品の向きとし、
+// 製品の全部材（ボルト除く）の頂点をその向きに写した最大−最小。選んだ時に一度だけ計算して覚える
+S.asmLenCache=new Map();
+function asmLen(ai){
+  if (S.asmLenCache.has(ai)) return S.asmLenCache.get(ai);
+  const ids=(S.asms[ai]?S.asms[ai].els:[]).filter(i=>S.els[i].grp==='main' && S.chunks.main[S.els[i].chunk]);
+  let best=-1, bl=0;
+  for (const i of ids){ const L=(S.plen&&S.plen[S.els[i].part]) || elAxis(i).len; if (L>bl){ bl=L; best=i; } }
+  let r=0;
+  if (best>=0){ const u=elAxis(best).u; let lo=Infinity, hi=-Infinity;
+    for (const i of ids){ const e=S.els[i], ch=S.chunks.main[e.chunk]; for (let k=e.vo;k<e.vo+e.vn;k++){ const t=ch.pos[k*3]*u.x+ch.pos[k*3+1]*u.y+ch.pos[k*3+2]*u.z; if (t<lo) lo=t; if (t>hi) hi=t; } }
+    r=hi-lo; }
+  S.asmLenCache.set(ai, r); return r;
+}
 function showCard(ei){
   const card=$('#card'); const e = ei>=0?S.els[ei]:null; const ai = e?e.asm:S.selAsm; const a = ai>=0?S.asms[ai]:null;
   if (!e && !a){ card.hidden=true; return; }
@@ -1725,7 +1739,8 @@ function showCard(ei){
   if (a){ h+='<div><div class="k">製品マーク</div><h2>'+esc(a.mark||'（なし）')+'</h2></div>';
     h+='<div class="row">'+(a.dwg.length? a.dwg.map(n=>'<button class="btn pri" data-dwg="'+esc(n)+'">図面 '+esc(n.replace(/\(.*\)$/,''))+'</button>').join('') : '<span class="k">この製品の図面はありません</span>')+'</div>';
     const nA=S.selAsms.length, am=asmMass(ai), pk=e&&e.grp==='main'?partKg(e.i):0;
-    h+='<dl>'+(am?'<dt>製品重量</dt><dd>'+kgTxt(am.kg)+'（形から計算・ボルト除く）</dd>':'')+(pk>0?'<dt>部材重量</dt><dd>'+kgTxt(pk)+'（'+esc(e.part||'タップした部材')+'）</dd>':'')+'</dl>';
+    const aL=nA>1?0:asmLen(ai);
+    h+='<dl>'+(am?'<dt>製品重量</dt><dd>'+kgTxt(am.kg)+'（形から計算・ボルト除く）</dd>':'')+(aL>0?'<dt>全長</dt><dd>'+Math.round(aL)+' mm（一番長い部材の材軸の向き）</dd>':'')+(pk>0?'<dt>部材重量</dt><dd>'+kgTxt(pk)+'（'+esc(e.part||'タップした部材')+'）</dd>':'')+'</dl>';
     if (nA>1) h+='<div class="k">選択中 '+nA+' 製品：'+esc(S.selAsms.map(i=>S.asms[i].mark||'?').join('、'))+'</div>';
     h+='<div class="row"><button class="btn" id="cZoom">ズーム</button><button class="btn" id="cIso">'+(S.iso&&S.iso.asm===ai?'全部表示':(nA>1?'選んだ製品だけ':'この製品だけ'))+'</button><button class="btn" id="cCog" aria-pressed="'+String(!!(S.cogObj&&S.cogObj.userData.asm===ai))+'">重心</button></div>'; }
   if (e){ h+='<button class="btn" id="cMore" type="button">'+(S.showMore?'詳細を隠す':'詳細')+'</button><dl id="cDl"'+(S.showMore?'':' hidden')+'><dt>部材</dt><dd>'+esc(e.part||'－')+'</dd><dt>名前</dt><dd>'+esc(e.name||'－')+'</dd><dt>断面</dt><dd>'+esc(e.profile||'－')+'</dd>'+profRows(e)+'<dt>材質</dt><dd>'+esc(e.mat||'－')+'</dd><dt>種類</dt><dd>'+(TYPE_JP[e.type]||e.type)+'</dd></dl>'; }
