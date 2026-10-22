@@ -124,7 +124,6 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
       <button class="tool" data-mode="dist" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 17L17 3M6 20l14-14M5 12l2 2M9 8l2 2M13 4l2 2"/></svg>寸法</button>
       <button class="tool" data-mode="vert" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4M4 21h16"/></svg>鉛直</button>
       <button class="tool" data-mode="edist" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 4h16M4 20h16M12 7v10M9 10l3-3 3 3M9 14l3 3 3-3"/></svg>辺の間</button>
-      <button class="tool" data-mode="eang" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 20h16M4 20L16 6M11 20a7 7 0 0 0-2-5"/></svg>線角度</button>
       <button class="tool" data-mode="fang" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 18l9-4 9 4M12 14V3M3 18V9l9-6"/></svg>面角度</button>
       <button class="tool" data-mode="axd" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 9h12M3 15h12M15 6v12M5 12h14M16 9l3 3-3 3"/></svg>材軸距離</button>
       <button class="tool" id="bClear"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg>消す</button>
@@ -867,7 +866,13 @@ const measGroup = new THREE.Group(); scene.add(measGroup);
 let need = true; const req = () => { need = true; };
 function fitDepth(){ const d=camera.position.distanceTo(controls.target);
   // 平行に見る時（面に合わせた時）は遠くから細い角度で見るので、手前は元のカメラの位置より前を切る
-  const nr=S.ortho ? Math.max(1, camera.position.clone().sub(S.ortho.c0).dot(S.ortho.dir)) : Math.max(1, d/300), fr=S.ortho ? d+(S.modelR||0)*3+d*0.1 : Math.max(d*30, (S.modelR||0)*3+d);
+  // 奥はカメラからモデルの一番遠い所まで（モデルの中心までの距離＋半径）。前は回る中心までの距離だけで決めていたので、拡大縮小で中心ごと前後に送ると
+  // カメラがモデルから離れても奥が伸びず、全部が奥の面の外に出て消えた（香月さん 2026/10/22：通り抜けた時に表示が全部消える）
+  // 手前は 2〜30mm（中心までの距離の 1/300）。製品の中に入っても近くの部材が切れない
+  const R=S.modelR||0, dc=S.modelC ? camera.position.distanceTo(S.modelC) : d;
+  const nr=S.ortho ? Math.max(1, camera.position.clone().sub(S.ortho.c0).dot(S.ortho.dir)) : Math.min(30, Math.max(2, d/300));
+  const fr=Math.max(dc+R*1.2, d*1.1, nr*100) + (S.ortho ? d*0.1 : 0);
+  if (!isFinite(nr) || !isFinite(fr)) return;
   if (Math.abs(nr-camera.near)>nr*0.05 || Math.abs(fr-camera.far)>fr*0.05){ camera.near=nr; camera.far=fr; camera.updateProjectionMatrix(); } }
 controls.addEventListener('change', ()=>{ fitDepth(); req(); });
 function resize(){ const r = cv.parentElement.getBoundingClientRect(); renderer.setSize(r.width, r.height, false); camera.aspect = r.width/Math.max(r.height,1); camera.updateProjectionMatrix(); req(); }
@@ -1107,7 +1112,7 @@ function fitBox(b, dir){
   const dist = r/Math.sin(THREE.MathUtils.degToRad(camera.fov/2))*0.75;
   controls.target.copy(c); camera.position.copy(c).addScaledVector(d, dist); controls.update(); fitDepth(); req();
 }
-function fitAll(){ const b = new THREE.Box3(); for (const m of S.meshes){ m.geometry.computeBoundingBox(); b.union(m.geometry.boundingBox);} S.modelR = b.getSize(new THREE.Vector3()).length()/2; fitBox(b, new THREE.Vector3(-0.9,-0.6,0.55).normalize()); }
+function fitAll(){ const b = new THREE.Box3(); for (const m of S.meshes){ m.geometry.computeBoundingBox(); b.union(m.geometry.boundingBox);} S.modelR = b.getSize(new THREE.Vector3()).length()/2; S.modelC = b.getCenter(new THREE.Vector3()); fitBox(b, new THREE.Vector3(-0.9,-0.6,0.55).normalize()); }
 
 // ---------- ピック ----------
 const ray = new THREE.Raycaster();
