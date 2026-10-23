@@ -63,7 +63,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
 #spd .k{color:var(--muted);font-size:11.5px;white-space:nowrap}
 #bgC{width:44px;height:36px;padding:0;border:1px solid var(--line);border-radius:6px;background:none}
 #spd .bgp{min-height:32px;padding:4px 9px;font-size:12.5px}
-#spdR{width:180px;max-width:50vw;accent-color:var(--accent);min-height:32px}
+#spdR,#panR{width:180px;max-width:50vw;accent-color:var(--accent);min-height:32px}
 #card h2{margin:0;font-size:17px;font-family:var(--f-num);letter-spacing:.02em}
 #card .k{color:var(--muted);font-size:11.5px}
 #card dl{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin:0;font-size:13px}
@@ -114,6 +114,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidde
     <div id="card" hidden></div>
     <div id="srch" hidden><form id="fForm" class="row" style="flex-wrap:nowrap"><input id="fq" type="search" placeholder="製品マーク・部材マーク（例 TLT-1）" autocomplete="off" enterkeyhint="search"><button class="btn pri" type="submit">検索</button><button class="btn" type="button" id="fClr">解除</button></form><span id="fRes" class="k"></span></div>
     <div id="spd" hidden><label for="spdR">ズームの速さ <b id="spdV">4</b></label><div class="row" style="align-items:center;flex-wrap:nowrap"><span class="k">遅い 1</span><input type="range" id="spdR" min="1" max="10" step="1" value="4"><span class="k">10 速い</span></div>
+      <label for="panR">移動の速さ <b id="panV">5</b></label><div class="row" style="align-items:center;flex-wrap:nowrap"><span class="k">遅い 1</span><input type="range" id="panR" min="1" max="10" step="1" value="5"><span class="k">10 速い</span></div>
       <label for="bgC">背景の色</label><div class="row" style="align-items:center"><input type="color" id="bgC" value="#c6cbd1"><button class="btn bgp" data-c="#c6cbd1" type="button">グレー</button><button class="btn bgp" data-c="#e9edf1" type="button">明るい</button><button class="btn bgp" data-c="#ffffff" type="button">白</button><button class="btn bgp" data-c="#2b3038" type="button">黒</button></div>
       <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="edgeC" checked style="width:20px;height:20px;accent-color:var(--accent)"> 全体に角の線を出す（重い）</label></div>
     <div id="vw" hidden><span class="k">見る向き（平行で表示。回すと元の見え方）</span><div class="vg"><button class="btn" type="button" data-v="0,0,1">上から</button><button class="btn" type="button" data-v="0,1,0">北から</button><button class="btn" type="button" data-v="1,0,0">東から</button><button class="btn" type="button" data-v="0,0,-1">下から</button><button class="btn" type="button" data-v="0,-1,0">南から</button><button class="btn" type="button" data-v="-1,0,0">西から</button></div></div>
@@ -794,7 +795,8 @@ function applySpeeds(){
   controls.rotateSpeed = (m ? 1.0 : 0.5) * (iso ? 0.7 : f);
   // 移動：回る中心に近すぎると極端に遅くなるので、中心まで少なくとも zoomFloor() ある時の速さにする
   // 横移動は前の 2 倍、近い時の下限も 2 倍（香月さん 10/23：横移動が遅い）
-  controls.panSpeed = 2 * (m ? 1.0 : (iso ? 1.3 : 0.75)) * f * Math.max(1, 2*zoomFloor()/Math.max(d,1));
+  // 「移動の速さ」1〜10（5 が今の速さ、1 段で約 1.4 倍）
+  controls.panSpeed = Math.pow(2,((S.panLv||5)-5)/2) * 2 * (m ? 1.0 : (iso ? 1.3 : 0.75)) * f * Math.max(1, 2*zoomFloor()/Math.max(d,1));
 }
 // 見ている物の大きさ（全体はモデル全体、「この製品だけ」はその製品の半径）
 function viewR(){
@@ -1829,6 +1831,10 @@ showKind();
 try{ const v=+localStorage.getItem('sv_zoomLv'); if (v>=1 && v<=10) S.zoomLv=v; }catch(e){}
 S.zoomLv=S.zoomLv||4; $('#spdR').value=S.zoomLv; $('#spdV').textContent=S.zoomLv;
 $('#spdR').oninput=e=>{ S.zoomLv=+e.target.value; $('#spdV').textContent=S.zoomLv; applySpeeds(); try{ localStorage.setItem('sv_zoomLv', S.zoomLv); }catch(er){} };
+// 移動の速さ（この端末に覚える）
+try{ const v=+localStorage.getItem('sv_panLv'); if (v>=1 && v<=10) S.panLv=v; }catch(e){}
+S.panLv=S.panLv||5; $('#panR').value=S.panLv; $('#panV').textContent=S.panLv;
+$('#panR').oninput=e=>{ S.panLv=+e.target.value; $('#panV').textContent=S.panLv; applySpeeds(); try{ localStorage.setItem('sv_panLv', S.panLv); }catch(er){} };
 // 背景の色（この端末に覚える）。上を少し濃くして奥行きを出す
 function setBg(c, save){
   if (!/^#[0-9a-f]{6}$/i.test(c)) return;
