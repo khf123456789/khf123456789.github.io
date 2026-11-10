@@ -834,11 +834,10 @@ cv.addEventListener('wheel', e=>{
   if (!e.deltaY) return;
   e.preventDefault(); e.stopImmediatePropagation();
   // 一定の歩幅：カーソルの向きへ前後に、カメラと回る中心をまとめて送る（香月さん 2026/10/22）。回した量で歩幅を変える（ふつうのホイール 1 回＝1 歩）
+  // 香月さん 2026/11/07：Trimble Connect・ICAD のように、カーソルの下の部材の点へ距離に合わせた歩幅で（近いほどゆっくり・面は越えない）。下の cmWheel
   if (!S.ortho){
     const n=e.deltaMode===1 ? Math.min(3, Math.abs(e.deltaY)/3) : Math.min(2, Math.max(0.2, Math.abs(e.deltaY)/100));
-    const r=cv.getBoundingClientRect(), rr=new THREE.Raycaster(); rr.setFromCamera(new THREE.Vector2((e.clientX-r.left)/r.width*2-1, -(e.clientY-r.top)/r.height*2+1), camera);
-    const st=zoomStep()*n*(e.deltaY<0?1:-1); camera.position.addScaledVector(rr.ray.direction,st); controls.target.addScaledVector(rr.ray.direction,st);
-    controls.update(); return;
+    cmWheel(e.clientX, e.clientY, n, e.deltaY<0); return;
   }
   let p=null;
   if (wheelAt && performance.now()-wheelAt.t<400 && Math.hypot(e.clientX-wheelAt.x, e.clientY-wheelAt.y)<3) p=wheelAt.p;   // 続けて回している間は同じ点（毎回部材を探すと重い）
@@ -1173,7 +1172,7 @@ function visibleAt(p, k){
   return dp <= dh + Math.max(1.5, dp*0.0015);
 }
 // 吸い付く候補を近い順に（見えている物だけ、最大 5 つ）
-function snapList(x,y,touch){
+function snapList(x,y,touch,more){
   const id = pickId(x,y); const R = touch?34:18;
   // 指（カーソル）の周りの部材も候補に（手前の部材に当たっても隣の角を拾う）
   const ids = new Set(); if (id>=0 && id<S.els.length) ids.add(id);
@@ -1211,6 +1210,17 @@ function snapList(x,y,touch){
     const onEnd = (s<1e-3||s>1-1e-3) && (t<1e-3||t>1-1e-3);   // 角どうしは「角」で拾っている
     if (!onEnd) cand(P.add(Q).multiplyScalar(.5),7,2,ja);
   }
+  // 寸法（more）：辺の上の一番近い点も候補に（角・孔などより後回し）（香月さん 2026/10/26。面の上は 10/27 にやめた）
+  if (more){
+    ray.setFromCamera(ndc(x,y),camera); const O=ray.origin, D=ray.direction, eg=[];
+    for (const [A,B,j] of near3){
+      u.subVectors(B,A); w.subVectors(A,O);
+      const a=u.dot(u), b=u.dot(D), d=u.dot(w), e=D.dot(w), den=a-b*b; if (a<1e-9) continue;
+      const s=den>1e-9*a ? Math.max(0,Math.min(1,(b*e-d)/den)) : 0, P=A.clone().addScaledVector(u,s), sp=toScreen(P);
+      if (sp.z<=1) eg.push({P, j, d:Math.hypot(sp.x-mx, sp.y-my)});
+    }
+    eg.sort((a,b)=>a.d-b.d); for (const g of eg.slice(0,2)) cand(g.P,6,-3,g.j);
+  }
   all.sort((a,b)=>a.d-b.d);
   const out=[];
   for (const c of all){
@@ -1221,7 +1231,7 @@ function snapList(x,y,touch){
   if (!out.length && h) out.push({p:h.p, k:5, el:id, n:h.n});
   return out;
 }
-function snap(x,y,touch){ const L=snapList(x,y,touch); return L.length?L[0]:null; }
+function snap(x,y,touch,more){ const L=snapList(x,y,touch,more); return L.length?L[0]:null; }
 // 辺を拾う：カーソルの真下だけでなく周りの部材も見る（マウスで辺の上をクリックすると、部材の外＝背景に当たって拾えなかった）。
 // 近い順に、その辺の一番近い点が見えている物
 function nearEdge(x,y,touch){
@@ -1814,7 +1824,7 @@ $('#bDwgClose').onclick=()=>{ if (S.dwgHist){ S.dwgHist=false; try{ history.back
 window.addEventListener('popstate', ()=>{ if (!$('#dwg').hidden){ S.dwgHist=false; closeDwg(); } });
 
 // ---------- 道具 ----------
-const HINT = {sel:'部材をタップすると製品が選ばれます。図面は右の欄から。面をダブルタップで正面に向く', dist:'1 点目をタップ（端点・線の交点・孔の中心・面の中心に吸い付きます）', vert:'鉛直：測り始めの点（角など）をタップ。次に、真上か真下にある辺か面をタップ', eang:'1 本目の辺をタップ', edist:'辺の間：1 本目の辺をタップ', fang:'1 つ目の面をタップ', axd:'材軸距離：測り始めの点（端点・孔の中心など）をタップ。次に材軸にする部材を選び、当てる辺か点をタップ', line:'線：1 点目をタップ（引いた線はこの端末に残ります）', erase:'線消し：消したい線の近くをタップ'};
+const HINT = {sel:'部材をタップすると製品が選ばれます。図面は右の欄から。面をダブルタップで正面に向く', dist:'1 点目をタップ（端点・線の交点・孔の中心・面の中心に吸い付きます。近くに無ければ辺の上の点）', vert:'鉛直：測り始めの点（角など）をタップ。次に、真上か真下にある辺か面をタップ', eang:'1 本目の辺をタップ', edist:'辺の間：1 本目の辺をタップ', fang:'1 つ目の面をタップ', axd:'材軸距離：測り始めの点（端点・孔の中心など）をタップ。次に材軸にする部材を選び、当てる辺か点をタップ', line:'線：1 点目をタップ（引いた線はこの端末に残ります）', erase:'線消し：消したい線の近くをタップ'};
 // ヒントは数秒で消える（画面を広く使う）
 let hintTimer=0;
 function hint(t){ const el=$('#hint'); el.textContent = t || HINT[S.mode]; el.hidden=false; clearTimeout(hintTimer); hintTimer=setTimeout(()=>{ el.hidden=true; }, 4000); }
@@ -1966,10 +1976,10 @@ function onTap(x,y,touch,add){
   if (S.mode==='vert' && S.pend){ vertTo(x,y,touch); return; }   // 鉛直の 2 つ目：辺か面
   if (S.mode==='dist' || S.mode==='line' || S.mode==='vert'){
     if (touch){   // 指：何に吸い付いたかを出して、「決定」で決める（違えば「次の候補」）
-      const L=snapList(x,y,true); if (!L.length){ hint('ここには吸い付く点がありません'); return; }
+      const L=snapList(x,y,true,S.mode==='dist'); if (!L.length){ hint('ここには吸い付く点がありません'); return; }
       S.cand={list:L, i:0}; showCand(); return;
     }
-    const sn=snap(x,y,false); if (!sn) return; pickPoint(sn); return;
+    const sn=snap(x,y,false,S.mode==='dist'); if (!sn) return; pickPoint(sn); return;
   }
   if (S.mode==='axd'){   // 材軸距離：1 つ目は点、2 つ目は材軸にする部材、3 つ目は辺か点
     if (!S.pend){
@@ -2064,7 +2074,7 @@ cv.addEventListener('pointermove', e=>{
   }
   if (edgeHover) showEdgeHover(null);
   if (S.mode!=='dist' && S.mode!=='line' && S.mode!=='vert' && S.mode!=='axd'){ if (hoverMk) showHover(null); return; }
-  const x=e.clientX, y=e.clientY; clearTimeout(raf); raf=setTimeout(()=>showHover(snap(x,y,false)), 50);
+  const x=e.clientX, y=e.clientY; clearTimeout(raf); raf=setTimeout(()=>showHover(snap(x,y,false,S.mode==='dist')), 50);
 });
 document.addEventListener('keydown', e=>{ if (e.key==='Escape'){ clearPend(); hint(); } });
 // ---------- 指 1 本の回転：指を置いた所の点を中心に回す。長押しで中心を固定（香月さん） ----------
@@ -2110,19 +2120,83 @@ cv.addEventListener('pointermove', e=>{
   const k=2*Math.PI/Math.max(cv.clientHeight,1)*0.5*f;
   orbitAround(rot.pivot, -dx*k, -dy*k);
 });
-// マウスの回転（左・右ドラッグ）：回転の中心を決めてある時はその点のまわりに回す
-let mrot=null;
+// ---------- マウスの動き：Trimble Connect・ICAD のように（香月さん 2026/11/07） ----------
+// 拡大縮小：カーソルの下の部材の点へ、そこまでの距離の一定の割合ずつ近づく（近いほどゆっくり・面は越えない。面の手前 CM_MIN で止まる）
+// 回転：押した所の部材の点（無ければ画面の真ん中の部材の点）のまわり。Shift＋クリックで決めた中心があればそれ
+// 移動：押した所の点がカーソルの下から動かない速さ
+// 拡大と回転は少しだけなめらかに（約 0.15 秒で止まる。行き過ぎない）。ボタンの割り当て・速さの設定は今まで通り（拡大の速さ＝1 回の割合）
+const CM={z:0, zP:null, yaw:0, pitch:0, rP:null, last:0, raf:0, lastP:null}, CM_TAU=0.05, CM_MIN=10;
+function cmKick(){ if (!CM.raf){ CM.last=performance.now(); CM.raf=requestAnimationFrame(cmStep); } }
+function cmStep(now){
+  CM.raf=0; const dt=Math.min(0.05, Math.max(0.001, (now-CM.last)/1000)); CM.last=now;
+  const a=1-Math.exp(-dt/CM_TAU); let more=false;
+  if (CM.zP && CM.z){ let lz=CM.z*a; if (Math.abs(CM.z)<0.003) lz=CM.z; CM.z-=lz; cmScale(CM.zP, Math.exp(lz)); more = more || !!CM.z; }
+  if (CM.rP && (CM.yaw || CM.pitch)){ let y=CM.yaw*a, p=CM.pitch*a; if (Math.abs(CM.yaw)+Math.abs(CM.pitch)<3e-4){ y=CM.yaw; p=CM.pitch; }
+    CM.yaw-=y; CM.pitch-=p; orbitAround(CM.rP, y, p); more = more || !!(CM.yaw || CM.pitch); }
+  if (more) cmKick();
+}
+// P を画面上で動かさずに、カメラと回る中心を P へ k 倍に寄せる。面の手前 CM_MIN より近くには行かない
+function cmScale(P, k){
+  const dist=camera.position.distanceTo(P);
+  if (k<1 && dist*k<CM_MIN){ k=Math.min(1, CM_MIN/Math.max(dist,1e-6)); CM.z=0; if (k>=1) return; }
+  camera.position.sub(P).multiplyScalar(k).add(P); controls.target.sub(P).multiplyScalar(k).add(P);
+  controls.update(); fitDepth(); req();
+}
+function cmWheel(x, y, n, zin){
+  let P=null; camera.updateMatrixWorld();   // 描く前に続けて回すと向きが古いまま点を探していた
+  // 続けて回している間は最初に探した点を使う（カーソルを動かすまで。毎回部材を探すと重い）
+  // 半分まで近づいたら探し直す（遠くでは隠れていた手前の細い部材を通り抜けない）
+  if (wheelAt && Math.hypot(x-wheelAt.x, y-wheelAt.y)<3 && performance.now()-wheelAt.t<1500 && camera.position.distanceTo(wheelAt.p)>wheelAt.d*0.5) P=wheelAt.p;
+  else {
+    P=hitPoint(x,y);
+    if (P) CM.lastP=P.clone();
+    else {   // 部材が無い所：最後の点かモデルの中心までの距離で
+      ray.setFromCamera(ndc(x,y), camera);
+      const D=CM.lastP ? camera.position.distanceTo(CM.lastP) : camera.position.distanceTo(S.modelC||controls.target);
+      P=ray.ray.at(Math.max(D, viewR()*0.05), new THREE.Vector3());
+    }
+    // 回る中心を P の奥行きに（見る向きは変えない）。近くを見ている時に手前の切れ目が深くならない
+    const vd=camera.getWorldDirection(new THREE.Vector3()), dep=P.clone().sub(camera.position).dot(vd);
+    if (dep>1){ controls.target.copy(camera.position).addScaledVector(vd, dep); controls.update(); }
+  }
+  wheelAt={x, y, t:performance.now(), p:P, d:(wheelAt && wheelAt.p===P) ? wheelAt.d : camera.position.distanceTo(P)};
+  const lz=n*zoomK()*Math.log(0.8)*(zin?1:-1);   // ホイール 1 回：速さ 5 で残りの距離の 2 割、速さ 4 で約 15%
+  if (CM.z && Math.sign(CM.z)!==Math.sign(lz)) CM.z=0;   // 向きを変えたらすぐ切り替え
+  CM.zP=P; CM.z+=lz; cmKick();
+}
+let mrot=null, mpan=null;
 cv.addEventListener('pointerdown', e=>{
-  if (e.pointerType!=='mouse' || !S.pivot || (e.button!==0 && e.button!==2) || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
-  mrot={x:e.clientX, y:e.clientY}; controls.enableRotate=false;
+  if (e.pointerType!=='mouse') return;
+  wheelAt=null; camera.updateMatrixWorld();
+  const mod=e.ctrlKey || e.metaKey || e.shiftKey, x=e.clientX, y=e.clientY;
+  if ((e.button===0 || e.button===2) && !mod){
+    const r=cv.getBoundingClientRect();
+    const P=S.pivot || hitPoint(x,y) || hitPoint(r.left+r.width/2, r.top+r.height/2) || controls.target.clone();
+    mrot={x, y}; CM.yaw=CM.pitch=0; CM.rP=P; controls.enableRotate=false;
+  } else if (e.button===1 || e.button===0 || e.button===2){   // 中ボタン（と Ctrl/Shift＋ドラッグ）＝移動
+    let P=hitPoint(x,y);
+    if (!P){ ray.setFromCamera(ndc(x,y), camera); const vd=camera.getWorldDirection(new THREE.Vector3());
+      P=ray.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(vd, controls.target), new THREE.Vector3()) || controls.target.clone(); }
+    mpan={x, y, P}; controls.enablePan=false;
+  }
 }, {capture:true});
 window.addEventListener('pointermove', e=>{
-  if (!mrot || e.pointerType!=='mouse') return;
-  const dx=e.clientX-mrot.x, dy=e.clientY-mrot.y; mrot.x=e.clientX; mrot.y=e.clientY;
-  const k=2*Math.PI/Math.max(cv.clientHeight,1)*controls.rotateSpeed;
-  orbitAround(S.pivot, -dx*k, -dy*k);
+  if (e.pointerType!=='mouse') return;
+  if (mrot){
+    const dx=e.clientX-mrot.x, dy=e.clientY-mrot.y; mrot.x=e.clientX; mrot.y=e.clientY;
+    const k=2*Math.PI/Math.max(cv.clientHeight,1)*controls.rotateSpeed;
+    CM.yaw-=dx*k; CM.pitch-=dy*k; cmKick();
+  } else if (mpan){
+    const dx=e.clientX-mpan.x, dy=e.clientY-mpan.y; mpan.x=e.clientX; mpan.y=e.clientY; if (!dx && !dy) return;
+    camera.updateMatrixWorld();
+    const vd=camera.getWorldDirection(new THREE.Vector3()), dep=Math.max(1, mpan.P.clone().sub(camera.position).dot(vd));
+    const s=2*dep*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))/Math.max(cv.clientHeight,1);
+    const rx=new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,0), up=new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld,1);
+    const mv=rx.multiplyScalar(-dx*s).addScaledVector(up, dy*s);
+    camera.position.add(mv); controls.target.add(mv); controls.update(); fitDepth(); req();
+  }
 });
-window.addEventListener('pointerup', e=>{ if (mrot && e.pointerType==='mouse'){ mrot=null; controls.enableRotate=true; } });
+window.addEventListener('pointerup', e=>{ if (e.pointerType!=='mouse') return; if (mrot){ mrot=null; controls.enableRotate=true; } if (mpan){ mpan=null; controls.enablePan=true; } });
 cv.addEventListener('contextmenu', e=>e.preventDefault());
 const endPtr=e=>{ if (e.pointerType==='mouse') return; ptrs1.delete(e.pointerId); clearTimeout(lpTimer); if (ptrs1.size===0) rot=null; };
 cv.addEventListener('pointerup', endPtr); cv.addEventListener('pointercancel', endPtr);
